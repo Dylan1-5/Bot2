@@ -201,7 +201,8 @@ async function startBot() {
                         await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
-                    // COMANDO TAG / MENCIÓN INVISIBLE + MULTIMEDIA + BYPASS
+                        
+// COMANDO TAG / MENCIÓN INVISIBLE + MULTIMEDIA + BYPASS
                     case 'tag':
                     case 'all':
                     case 'invocar':
@@ -219,15 +220,13 @@ async function startBot() {
 
                             const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
                             // BYPASS: Creador, Owner o Número del Bot
-                            const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev || senderNumber === '50612345678'
+                            const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
 
                             if (!isUserAdmin && !isOwner) {
                                 return reply('「✎」 Este comando es solo para Administradores.')
                             }
 
                             const targetParticipants = participants.map(p => p.id).filter(Boolean)
-                            
-                            // Mención invisible (Unicode Zero-Width Space)
                             const invisibleTag = '\u200B'.repeat(100)
 
                             const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.[type]?.contextInfo
@@ -235,38 +234,46 @@ async function startBot() {
 
                             await conn.sendPresenceUpdate('composing', from)
 
-                            // 1. SI RESPONDISTE A UN MENSAJE (IMAGEN, VIDEO, TEXTO, STICKER, ETC.)
+                            // 1. SI RESPONDISTE A UN MENSAJE (CITADO)
                             if (quotedMsg) {
                                 const quotedType = Object.keys(quotedMsg)[0]
-                                const contentToForward = {}
-                                contentToForward[quotedType] = JSON.parse(JSON.stringify(quotedMsg[quotedType]))
-                                
-                                if (!contentToForward.contextInfo) contentToForward.contextInfo = {}
-                                contentToForward.contextInfo.mentionedJid = targetParticipants
-
+                                const quotedContent = quotedMsg[quotedType]
                                 let customText = args.join(' ').trim()
-                                if (customText) {
-                                    if (quotedType === 'conversation') {
-                                        contentToForward.conversation = `${customText} ${invisibleTag}`
-                                    } else if (quotedType === 'extendedTextMessage') {
-                                        contentToForward.extendedTextMessage.text = `${customText} ${invisibleTag}`
-                                    } else if (contentToForward[quotedType] && 'caption' in contentToForward[quotedType]) {
-                                        contentToForward[quotedType].caption = `${customText} ${invisibleTag}`
-                                    }
-                                } else {
-                                    if (quotedType === 'conversation') {
-                                        contentToForward.conversation += ` ${invisibleTag}`
-                                    } else if (quotedType === 'extendedTextMessage') {
-                                        contentToForward.extendedTextMessage.text += ` ${invisibleTag}`
-                                    } else if (contentToForward[quotedType] && 'caption' in contentToForward[quotedType]) {
-                                        contentToForward[quotedType].caption = `${contentToForward[quotedType].caption || ''} ${invisibleTag}`
-                                    }
+
+                                // Si es un mensaje de texto citado
+                                if (quotedType === 'conversation' || quotedType === 'extendedTextMessage') {
+                                    let textToFormat = customText || quotedContent.text || quotedContent || ''
+                                    return await conn.sendMessage(from, {
+                                        text: `${textToFormat} ${invisibleTag}`,
+                                        mentions: targetParticipants
+                                    }, { quoted: msg })
                                 }
 
-                                return await conn.sendMessage(from, contentToForward)
+                                // Si es imagen, video, audio o sticker citado, usamos el mensaje original como referencia de reenvío
+                                const quotedKey = {
+                                    remoteJid: from,
+                                    fromMe: contextInfo.participant === conn.user?.id,
+                                    id: contextInfo.stanzaId,
+                                    participant: contextInfo.participant
+                                }
+
+                                // Construir el mensaje reenviado con las menciones invisibles
+                                let forwardOptions = {
+                                    mentions: targetParticipants
+                                }
+
+                                return await conn.sendMessage(from, {
+                                    forward: {
+                                        key: quotedKey,
+                                        message: quotedMsg
+                                    },
+                                    contextInfo: {
+                                        mentionedJid: targetParticipants
+                                    }
+                                })
                             }
 
-                            // 2. SI ES SOLO TEXTO SIN RESPONDER A NADA
+                            // 2. SI ES SOLO TEXTO DIRECTO (SIN RESPONDER A NADA)
                             let textMessage = args.join(' ').trim()
                             if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
 
