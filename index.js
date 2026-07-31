@@ -5,9 +5,8 @@ import chalk from 'chalk'
 import { Boom } from '@hapi/boom'
 import fs from 'fs'
 import yts from 'yt-search'
-import fetch from 'node-fetch'
-import crypto from 'crypto'
 import readline from 'readline'
+import { downloadMedia } from './lib/ytdl.js'
 
 const decodeJid = (jid) => {
     if (!jid) return jid
@@ -36,127 +35,6 @@ const question = (text) => {
             resolve(answer)
         })
     })
-}
-
-const getVideoId = url => {
-    const match = url.match(/(?:v=|youtu\.be\/|shorts\/)([A-Za-z0-9_-]{11})/)
-    if (!match) throw new Error('No se pudo extraer el videoId')
-    return match[1]
-}
-
-// ==========================================
-// MOTOR DE DESCARGA YOUTUBE (SoyMaycol)
-// ==========================================
-async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
-    const id = getVideoId(youtubeUrl)
-    const fmt = formato
-    const q = fmt === 'mp4' ? '720' : '320'
-    const B = 'https://embed.dlsrv.online'
-
-    const H = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-        'Sec-Ch-Ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Microsoft Edge";v="126"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Upgrade-Insecure-Requests': '1'
-    }
-
-    const initialRes = await fetch(`${B}/v1/full?videoId=${id}`, { headers: H })
-    const p = await initialRes.text()
-    
-    const rawCookies = initialRes.headers.raw()['set-cookie'] || []
-    const cookieHeader = rawCookies.map(c => c.split(';')[0]).join('; ')
-
-    const tknMatch = p.match(/data-token="([^"]+)"/)
-    if (!tknMatch) throw new Error('No se pudo obtener el token inicial de descarga. Servidor en mantenimiento.')
-    const tkn = tknMatch[1]
-
-    const API_H = {
-        ...H,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Origin': B,
-        'Referer': `${B}/v1/full?videoId=${id}`,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-        'Cookie': cookieHeader
-    }
-
-    const S = s => crypto.createHash('sha256').update(s).digest('hex')
-    const HM = (k, d) => crypto.createHmac('sha256', k).update(d).digest('hex')
-
-    const d = {
-        ua: H['User-Agent'],
-        lang: 'es-ES',
-        languages: 'es-ES,es',
-        screen: { w: 1920, h: 1080, cd: 24 },
-        tzOffset: '-300',
-        tz: 'America/New_York',
-        hc: '12',
-        dm: '8',
-        chrome: 'true',
-        canvasHash: '',
-        webdriver: 'false',
-        gpu: '',
-        gpuVendor: ''
-    }
-
-    const fp = S([
-        d.ua, d.lang, d.languages, `${d.screen.w}x${d.screen.h}x${d.screen.cd}`,
-        d.tzOffset, d.tz, d.hc, d.dm, d.chrome, d.canvasHash
-    ].join('|'))
-
-    const ch = await (await fetch(`${B}/api/challenge`, { method: 'POST', headers: API_H })).json()
-
-    let n = 0n
-    const pfx = '0'.repeat(ch.difficulty)
-    while (!S(`${ch.salt}:${ch.ts}:${n}`).startsWith(pfx)) n++
-
-    const v = await (await fetch(`${B}/api/verify`, {
-        method: 'POST',
-        headers: API_H,
-        body: JSON.stringify({
-            initToken: tkn,
-            fpHash: fp,
-            fpDetails: d,
-            salt: ch.salt,
-            ts: ch.ts,
-            signature: ch.signature,
-            nonce: n.toString(),
-            telemetry: { interactions: 10, timeToVerify: 5000 }
-        })
-    })).json()
-
-    if (!v.token) throw new Error('Falló la verificación del reto criptográfico.')
-
-    const ts = Date.now().toString()
-    const sig = HM(v.token.slice(-32), `${ts}:${id}`)
-
-    const ep = fmt === 'mp4' ? '/api/download/mp4' : '/api/download/mp3'
-    const bd = { videoId: id, format: fmt || 'mp3', quality: q }
-
-    const dl = await (await fetch(`${B}${ep}`, {
-        method: 'POST',
-        headers: {
-            ...API_H,
-            'Authorization': `Bearer ${v.token}`,
-            'x-fp': fp,
-            'x-ts': ts,
-            'x-sig': sig
-        },
-        body: JSON.stringify(bd)
-    })).json()
-
-    const downloadUrl = dl.url || dl.downloadUrl || dl.result?.downloadUrl || dl.result
-    if (!downloadUrl) throw new Error('No se recibió la URL final de descarga.')
-
-    return downloadUrl
 }
 
 // ==========================================
@@ -235,8 +113,8 @@ async function startBot() {
 
             console.log(chalk.gray(`[${new Date().toLocaleTimeString()}]`), chalk.cyan(`${pushName}:`), chalk.white(body || '[MEDIA]'))
 
-            // DETECCIÓN FLEXIBLE DE PREFIJO
-            const prefixList = (global.prefix && (Array.isArray(global.prefix) ? global.prefix : [global.prefix])) || ['!', '/']
+            // LECTURA DE PREFIJO DESDE CONFIG.JS
+            const prefixList = Array.isArray(global.prefix) ? global.prefix : [global.prefix]
             const usedPrefix = prefixList.find(p => body.startsWith(p))
             
             if (usedPrefix !== undefined) {
@@ -248,6 +126,10 @@ async function startBot() {
                     await delay(1000)
                     await conn.sendPresenceUpdate('paused', from)
                     return conn.sendMessage(from, { text }, { quoted: msg })
+                }
+
+                const react = async (emoji) => {
+                    return conn.sendMessage(from, { react: { text: emoji, key: msg.key } })
                 }
                 
                 switch (command) {
@@ -268,9 +150,9 @@ async function startBot() {
 > Información de creador 
 ● ${usedPrefix}status
 > Ver estado
-● ${usedPrefix}play
-> Descargar audio 
-● ${usedPrefix}play2
+● ${usedPrefix}play / ${usedPrefix}p
+> Descargar nota de voz 
+● ${usedPrefix}play2 / ${usedPrefix}v
 > Descargar video 
 ● ${usedPrefix}tag
 > Mencionar a todos 
@@ -368,26 +250,21 @@ async function startBot() {
                     case 'p':
                     case 'play':
                     case 'mp3':
+                    case 'audio':
+                    case 'song':
+                    case 'musica':
                         try {
                             if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
-                            const input_text = args.join(' ').trim()
                             
-                            const searchOptions = {
-                                hl: 'es',
-                                gl: 'CR',
-                                headers: {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
-                                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-                                    'Referer': 'https://www.google.com/'
-                                }
-                            }
+                            await react('🎵')
+                            const input_text = args.join(' ').trim()
 
-                            let search = await yts({ query: input_text, ...searchOptions }).catch(() => null)
+                            let search = await yts({ query: input_text }).catch(() => null)
                             let video = search?.videos?.[0]
                             if (!video) return reply('No se encontraron resultados.')
 
                             if (CONFIG.bannerEnabled) {
-                                const captionInfo = `➩ *Descargando:*
+                                const captionInfo = `➩ *Descargando Nota de Voz:*
 ${video.title}
 
 │ ❖ *Canal:* ${video.author.name}
@@ -403,14 +280,17 @@ ${video.title}
                             
                             await conn.sendPresenceUpdate('recording', from)
                             
-                            const downloadUrl = await descargarYTMaycol(video.url, 'mp3')
+                            // DESCARGA LOCAL USANDO LIB/YTDL.JS
+                            const { filePath, cleanup } = await downloadMedia(video.url, 'vn')
                             
+                            // ENVÍA COMO NOTA DE VOZ (PTT)
                             await conn.sendMessage(from, {
-                                audio: { url: downloadUrl },
-                                fileName: `${video.title}.mp3`,
-                                mimetype: 'audio/mpeg'
+                                audio: fs.readFileSync(filePath),
+                                mimetype: 'audio/ogg; codecs=opus',
+                                ptt: true
                             }, { quoted: msg })
                             
+                            cleanup()
                             await conn.sendPresenceUpdate('paused', from)
 
                         } catch (e) { 
@@ -419,23 +299,17 @@ ${video.title}
                         }
                         break
 
+                    case 'v':
                     case 'play2':
                     case 'mp4':
+                    case 'video':
                         try {
                             if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
-                            const input_text = args.join(' ').trim()
                             
-                            const searchOptions = {
-                                hl: 'es',
-                                gl: 'CR',
-                                headers: {
-                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
-                                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-                                    'Referer': 'https://www.google.com/'
-                                }
-                            }
+                            await react('🎬')
+                            const input_text = args.join(' ').trim()
 
-                            let search = await yts({ query: input_text, ...searchOptions }).catch(() => null)
+                            let search = await yts({ query: input_text }).catch(() => null)
                             let video = search?.videos?.[0]
                             if (!video) return reply('No se encontraron resultados.')
 
@@ -456,14 +330,16 @@ ${video.title}
                             
                             await conn.sendPresenceUpdate('composing', from)
                             
-                            const downloadUrl = await descargarYTMaycol(video.url, 'mp4')
+                            // DESCARGA LOCAL MP4
+                            const { filePath, cleanup } = await downloadMedia(video.url, 'mp4')
                             
                             await conn.sendMessage(from, {
-                                video: { url: downloadUrl },
+                                video: fs.readFileSync(filePath),
                                 fileName: `${video.title}.mp4`,
                                 mimetype: 'video/mp4'
                             }, { quoted: msg })
                             
+                            cleanup()
                             await conn.sendPresenceUpdate('paused', from)
 
                         } catch (e) { 
@@ -473,7 +349,9 @@ ${video.title}
                         break
                         
                     default:
-                        if (body.startsWith(usedPrefix)) reply(`Comando no encontrado: *${command}*`)
+                        if (body.startsWith(usedPrefix)) {
+                            reply(`El comando *${usedPrefix}${command}* no existe.\nUsa *${usedPrefix}menu* para ver la lista de comandos.`)
+                        }
                         break
                 }
             }
