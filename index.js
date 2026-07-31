@@ -55,15 +55,37 @@ async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
 
     const H = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
-        'Content-Type': 'application/json',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        'Sec-Ch-Ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Microsoft Edge";v="126"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Upgrade-Insecure-Requests': '1'
+    }
+
+    const initialRes = await fetch(`${B}/v1/full?videoId=${id}`, { headers: H })
+    const p = await initialRes.text()
+    
+    const rawCookies = initialRes.headers.raw()['set-cookie'] || []
+    const cookieHeader = rawCookies.map(c => c.split(';')[0]).join('; ')
+
+    const tknMatch = p.match(/data-token="([^"]+)"/)
+    if (!tknMatch) throw new Error('No se pudo obtener el token inicial de descarga. Servidor en mantenimiento.')
+    const tkn = tknMatch[1]
+
+    const API_H = {
+        ...H,
         'Accept': 'application/json',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Type': 'application/json',
         'Origin': B,
         'Referer': `${B}/v1/full?videoId=${id}`,
         'Sec-Fetch-Dest': 'empty',
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin',
-        'Priority': 'u=1,i'
+        'Cookie': cookieHeader
     }
 
     const S = s => crypto.createHash('sha256').update(s).digest('hex')
@@ -71,8 +93,8 @@ async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
 
     const d = {
         ua: H['User-Agent'],
-        lang: 'en-US',
-        languages: 'en-US,en',
+        lang: 'es-ES',
+        languages: 'es-ES,es',
         screen: { w: 1920, h: 1080, cd: 24 },
         tzOffset: '-300',
         tz: 'America/New_York',
@@ -86,24 +108,11 @@ async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
     }
 
     const fp = S([
-        d.ua,
-        d.lang,
-        d.languages,
-        `${d.screen.w}x${d.screen.h}x${d.screen.cd}`,
-        d.tzOffset,
-        d.tz,
-        d.hc,
-        d.dm,
-        d.chrome,
-        d.canvasHash
+        d.ua, d.lang, d.languages, `${d.screen.w}x${d.screen.h}x${d.screen.cd}`,
+        d.tzOffset, d.tz, d.hc, d.dm, d.chrome, d.canvasHash
     ].join('|'))
 
-    const p = await (await fetch(`${B}/v1/full?videoId=${id}`, { headers: H })).text()
-    const tknMatch = p.match(/data-token="([^"]+)"/)
-    if (!tknMatch) throw new Error('No se pudo obtener el token inicial de descarga.')
-    const tkn = tknMatch[1]
-
-    const ch = await (await fetch(`${B}/api/challenge`, { method: 'POST', headers: H })).json()
+    const ch = await (await fetch(`${B}/api/challenge`, { method: 'POST', headers: API_H })).json()
 
     let n = 0n
     const pfx = '0'.repeat(ch.difficulty)
@@ -111,7 +120,7 @@ async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
 
     const v = await (await fetch(`${B}/api/verify`, {
         method: 'POST',
-        headers: H,
+        headers: API_H,
         body: JSON.stringify({
             initToken: tkn,
             fpHash: fp,
@@ -120,10 +129,7 @@ async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
             ts: ch.ts,
             signature: ch.signature,
             nonce: n.toString(),
-            telemetry: {
-                interactions: 10,
-                timeToVerify: 5000
-            }
+            telemetry: { interactions: 10, timeToVerify: 5000 }
         })
     })).json()
 
@@ -133,16 +139,12 @@ async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
     const sig = HM(v.token.slice(-32), `${ts}:${id}`)
 
     const ep = fmt === 'mp4' ? '/api/download/mp4' : '/api/download/mp3'
-    const bd = {
-        videoId: id,
-        format: fmt || 'mp3',
-        quality: q
-    }
+    const bd = { videoId: id, format: fmt || 'mp3', quality: q }
 
     const dl = await (await fetch(`${B}${ep}`, {
         method: 'POST',
         headers: {
-            ...H,
+            ...API_H,
             'Authorization': `Bearer ${v.token}`,
             'x-fp': fp,
             'x-ts': ts,
@@ -233,7 +235,8 @@ async function startBot() {
 
             console.log(chalk.gray(`[${new Date().toLocaleTimeString()}]`), chalk.cyan(`${pushName}:`), chalk.white(body || '[MEDIA]'))
 
-            const prefixList = Array.isArray(global.prefix) ? global.prefix : [global.prefix]
+            // DETECCIÓN FLEXIBLE DE PREFIJO
+            const prefixList = (global.prefix && (Array.isArray(global.prefix) ? global.prefix : [global.prefix])) || ['!', '/']
             const usedPrefix = prefixList.find(p => body.startsWith(p))
             
             if (usedPrefix !== undefined) {
@@ -242,7 +245,7 @@ async function startBot() {
                 
                 const reply = async (text) => {
                     await conn.sendPresenceUpdate('composing', from)
-                    await delay(1500)
+                    await delay(1000)
                     await conn.sendPresenceUpdate('paused', from)
                     return conn.sendMessage(from, { text }, { quoted: msg })
                 }
@@ -254,7 +257,7 @@ async function startBot() {
                         const menu = `Hola ${pushName} 
 
 ● Prefijo: ${usedPrefix}
-● Dev: ${global.dev}
+● Dev: ${global.dev || 'Dy'}
 
 ――――――――――――――――――――
 
@@ -274,13 +277,17 @@ async function startBot() {
 ――――――――――――――――――――`
                         
                         await conn.sendPresenceUpdate('composing', from)
-                        await delay(1500)
+                        await delay(1000)
                         await conn.sendPresenceUpdate('paused', from)
                         
-                        await conn.sendMessage(from, { 
-                            image: { url: global.banner }, 
-                            caption: menu 
-                        }, { quoted: msg })
+                        if (global.banner) {
+                            await conn.sendMessage(from, { 
+                                image: { url: global.banner }, 
+                                caption: menu 
+                            }, { quoted: msg })
+                        } else {
+                            await reply(menu)
+                        }
                         break
                         
                     case 'status':
@@ -291,11 +298,10 @@ async function startBot() {
                         const s = Math.floor(uptime % 60)
                         const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)
                         
-                        await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev}`)
+                        await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}`)
                         break
                         
                     case 'ping':
-                    case 'p':
                         const start = Date.now()
                         await conn.sendPresenceUpdate('composing', from)
                         await delay(500)
@@ -306,8 +312,8 @@ async function startBot() {
                     case 'owner':
                     case 'creador':
                     case 'dueño':
-                        const ownerNumber = global.owner[0][0]
-                        const ownerName = global.dev
+                        const ownerNumber = global.owner?.[0]?.[0] || 'Sin número'
+                        const ownerName = global.dev || 'Dy'
                         await reply(`INFORMACION OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
@@ -333,7 +339,7 @@ async function startBot() {
                             const quotedMsg = contextInfo?.quotedMessage
 
                             await conn.sendPresenceUpdate('composing', from)
-                            await delay(1500)
+                            await delay(1000)
 
                             if (quotedMsg) {
                                 const quotedType = Object.keys(quotedMsg)[0]
@@ -359,6 +365,7 @@ async function startBot() {
                         } catch (e) { reply(`[Error]: ${e.message}`) }
                         break
 
+                    case 'p':
                     case 'play':
                     case 'mp3':
                         try {
