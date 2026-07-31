@@ -1,20 +1,13 @@
 import './config.js'
-import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys'
+import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, makeCacheableSignalKeyStore, delay } from '@whiskeysockets/baileys'
 import P from 'pino'
 import chalk from 'chalk'
 import { Boom } from '@hapi/boom'
 import fs from 'fs'
 import yts from 'yt-search'
 import fetch from 'node-fetch'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import crypto from 'crypto'
 import readline from 'readline'
-
-const execPromise = promisify(exec)
-
-// Configuración para leer tu número desde la consola de Termux
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-const question = (text) => new Promise((resolve) => rl.question(text, resolve))
 
 const decodeJid = (jid) => {
     if (!jid) return jid
@@ -25,18 +18,24 @@ const decodeJid = (jid) => {
     return jid
 }
 
+const CONFIG = {
+    bannerEnabled: true
+}
+
 // ==========================================
-// FUNCIÓN DE VALIDACIÓN UNIVERSAL DE NÚMEROS
+// INTERFAZ DE CONSOLA PARA TERMUX
 // ==========================================
-async function isValidPhoneNumber(number) {
-    try {
-        let num = String(number).trim().replace(/[\s\-()+]/g, '')
-        const isNumeric = /^\d+$/.test(num)
-        const isLengthValid = num.length >= 7 && num.length <= 15
-        return isNumeric && isLengthValid
-    } catch (error) {
-        return false
-    }
+const question = (text) => {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    })
+    return new Promise((resolve) => {
+        rl.question(text, (answer) => {
+            rl.close()
+            resolve(answer)
+        })
+    })
 }
 
 const getVideoId = url => {
@@ -46,38 +45,116 @@ const getVideoId = url => {
 }
 
 // ==========================================
-// MOTOR DE DESCARGA HÍBRIDO (API + YT-DLP)
+// MOTOR DE DESCARGA YOUTUBE (SoyMaycol)
 // ==========================================
-async function descargarYT(youtubeUrl, formato = 'mp3') {
+async function descargarYTMaycol(youtubeUrl, formato = 'mp3') {
     const id = getVideoId(youtubeUrl)
-    const urlCompleta = `https://www.youtube.com/watch?v=${id}`
-    
-    if (formato === 'mp3') {
-        try {
-            const res = await fetch(`https://api.vreden.web.id/api/ytmp3?url=${urlCompleta}`)
-            const json = await res.json()
-            if (json.status === 200 && json.result?.downloadUrl) return { tipo: 'url', stream: json.result.downloadUrl }
-        } catch (e) {
-            console.log(chalk.yellow('[API Audio Falló, usando yt-dlp local...]'))
-        }
-        
-        const output = `./${id}.mp3`
-        await execPromise(`yt-dlp -x --audio-format mp3 -o "${output}" "${urlCompleta}"`)
-        return { tipo: 'local', stream: output }
+    const fmt = formato
+    const q = fmt === 'mp4' ? '720' : '320'
+    const B = 'https://embed.dlsrv.online'
 
-    } else {
-        try {
-            const res = await fetch(`https://api.vreden.web.id/api/ytmp4?url=${urlCompleta}`)
-            const json = await res.json()
-            if (json.status === 200 && json.result?.downloadUrl) return { tipo: 'url', stream: json.result.downloadUrl }
-        } catch (e) {
-            console.log(chalk.yellow('[API Video Falló, usando yt-dlp local...]'))
-        }
-        
-        const output = `./${id}.mp4`
-        await execPromise(`yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]" --merge-output-format mp4 -o "${output}" "${urlCompleta}"`)
-        return { tipo: 'local', stream: output }
+    const H = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Origin': B,
+        'Referer': `${B}/v1/full?videoId=${id}`,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Priority': 'u=1,i'
     }
+
+    const S = s => crypto.createHash('sha256').update(s).digest('hex')
+    const HM = (k, d) => crypto.createHmac('sha256', k).update(d).digest('hex')
+
+    const d = {
+        ua: H['User-Agent'],
+        lang: 'en-US',
+        languages: 'en-US,en',
+        screen: { w: 1920, h: 1080, cd: 24 },
+        tzOffset: '-300',
+        tz: 'America/New_York',
+        hc: '12',
+        dm: '8',
+        chrome: 'true',
+        canvasHash: '',
+        webdriver: 'false',
+        gpu: '',
+        gpuVendor: ''
+    }
+
+    const fp = S([
+        d.ua,
+        d.lang,
+        d.languages,
+        `${d.screen.w}x${d.screen.h}x${d.screen.cd}`,
+        d.tzOffset,
+        d.tz,
+        d.hc,
+        d.dm,
+        d.chrome,
+        d.canvasHash
+    ].join('|'))
+
+    const p = await (await fetch(`${B}/v1/full?videoId=${id}`, { headers: H })).text()
+    const tknMatch = p.match(/data-token="([^"]+)"/)
+    if (!tknMatch) throw new Error('No se pudo obtener el token inicial de descarga.')
+    const tkn = tknMatch[1]
+
+    const ch = await (await fetch(`${B}/api/challenge`, { method: 'POST', headers: H })).json()
+
+    let n = 0n
+    const pfx = '0'.repeat(ch.difficulty)
+    while (!S(`${ch.salt}:${ch.ts}:${n}`).startsWith(pfx)) n++
+
+    const v = await (await fetch(`${B}/api/verify`, {
+        method: 'POST',
+        headers: H,
+        body: JSON.stringify({
+            initToken: tkn,
+            fpHash: fp,
+            fpDetails: d,
+            salt: ch.salt,
+            ts: ch.ts,
+            signature: ch.signature,
+            nonce: n.toString(),
+            telemetry: {
+                interactions: 10,
+                timeToVerify: 5000
+            }
+        })
+    })).json()
+
+    if (!v.token) throw new Error('Falló la verificación del reto criptográfico.')
+
+    const ts = Date.now().toString()
+    const sig = HM(v.token.slice(-32), `${ts}:${id}`)
+
+    const ep = fmt === 'mp4' ? '/api/download/mp4' : '/api/download/mp3'
+    const bd = {
+        videoId: id,
+        format: fmt || 'mp3',
+        quality: q
+    }
+
+    const dl = await (await fetch(`${B}${ep}`, {
+        method: 'POST',
+        headers: {
+            ...H,
+            'Authorization': `Bearer ${v.token}`,
+            'x-fp': fp,
+            'x-ts': ts,
+            'x-sig': sig
+        },
+        body: JSON.stringify(bd)
+    })).json()
+
+    const downloadUrl = dl.url || dl.downloadUrl || dl.result?.downloadUrl || dl.result
+    if (!downloadUrl) throw new Error('No se recibió la URL final de descarga.')
+
+    return downloadUrl
 }
 
 // ==========================================
@@ -98,46 +175,40 @@ async function startBot() {
             creds: state.creds, 
             keys: makeCacheableSignalKeyStore(state.keys, P({ level: 'silent' })) 
         },
-        browser: ["Ubuntu", "Chrome", "125.0.0.0"], // Simulación moderna anti-bloqueos
+        browser: ["Windows", "Edge", "126.0.0.0"],
         syncFullHistory: false,
         markOnlineOnConnect: true
     })
     
     conn.ev.on('creds.update', saveCreds)
 
-    // SOLICITUD DE NÚMERO INTERACTIVA Y UNIVERSAL
+    // PEDIR NÚMERO EN LA TERMINAL SI NO HAY SESIÓN
     if (!fs.existsSync(`./${authFolder}/creds.json`) && !conn.authState.creds.registered) {
-        console.log(chalk.cyan('\n   ======================================'))
-        console.log(chalk.cyan('    CONFIGURACIÓN DE VINCULACIÓN (TERMUX)'))
-        console.log(chalk.cyan('   ======================================\n'))
-        
-        let phoneNumber = ''
-        let valid = false
+        console.log(chalk.cyan('\n======================================'))
+        console.log(chalk.cyan('       CONFIGURACIÓN DE TERMUX'))
+        console.log(chalk.cyan('======================================\n'))
 
-        while (!valid) {
-            phoneNumber = await question(chalk.white(' 👉 Ingresa tu número de WhatsApp con código de país (ej: 50688888888):\n > '))
-            valid = await isValidPhoneNumber(phoneNumber)
-            if (!valid) {
-                console.log(chalk.red(' ❌ Número inválido. Usa solo números incluyendo el código de área.\n'))
-            }
+        let phoneNumber = await question(chalk.yellow('Ingresa tu número de WhatsApp (Ej: 50612345678): '))
+        phoneNumber = phoneNumber.replace(/[\s\-()+]/g, '')
+
+        if (phoneNumber) {
+            console.log(chalk.cyan('\nSolicitando código de vinculación...\n'))
+            setTimeout(async () => {
+                try {
+                    let codeBot = await conn.requestPairingCode(phoneNumber)
+                    codeBot = codeBot.match(/.{1,4}/g)?.join("-") || codeBot
+                    console.log(chalk.green('======================================'))
+                    console.log(chalk.green('🔑 TU CÓDIGO DE VINCULACIÓN ES:'))
+                    console.log(chalk.white(`👉   ${codeBot}   👈`))
+                    console.log(chalk.green('======================================\n'))
+                } catch (err) {
+                    console.error(chalk.red('❌ Error al solicitar código:'), err)
+                }
+            }, 2000)
+        } else {
+            console.log(chalk.red('\n[!] Número no válido.'))
+            process.exit(1)
         }
-
-        const cleanedNumber = phoneNumber.replace(/[\s\-()+]/g, '')
-
-        console.log(chalk.yellow(`\n ➩ Generando código para: +${cleanedNumber}...`))
-        setTimeout(async () => {
-            try {
-                let codeBot = await conn.requestPairingCode(cleanedNumber)
-                codeBot = codeBot.match(/.{1,4}/g)?.join("-") || codeBot
-                console.log(chalk.green('\n   ======================================'))
-                console.log(chalk.green('   TU CÓDIGO DE VINCULACIÓN ES:'))
-                console.log(chalk.white(`   👉   ${codeBot}   👈`))
-                console.log(chalk.green('   ======================================\n'))
-                console.log(chalk.gray(' Introduce este código en tu WhatsApp (Dispositivos vinculados).\n'))
-            } catch (err) {
-                console.error(chalk.red('❌ Error al solicitar el código:'), err)
-            }
-        }, 3000)
     }
 
     // ==========================================
@@ -168,16 +239,22 @@ async function startBot() {
             if (usedPrefix !== undefined) {
                 const args = body.slice(usedPrefix.length).trim().split(/ +/)
                 const command = args.shift().toLowerCase()
-                const reply = (text) => conn.sendMessage(from, { text }, { quoted: msg })
+                
+                const reply = async (text) => {
+                    await conn.sendPresenceUpdate('composing', from)
+                    await delay(1500)
+                    await conn.sendPresenceUpdate('paused', from)
+                    return conn.sendMessage(from, { text }, { quoted: msg })
+                }
                 
                 switch (command) {
                     case 'menu':
                     case 'help':
                     case 'ayuda':
-                        const menu = `¡Hola! *${pushName}*, soy *${global.botName}*
+                        const menu = `Hola ${pushName} 
 
 ● Prefijo: ${usedPrefix}
-● Owner: ${global.dev}
+● Dev: ${global.dev}
 
 ――――――――――――――――――――
 
@@ -196,6 +273,10 @@ async function startBot() {
 > Mencionar a todos 
 ――――――――――――――――――――`
                         
+                        await conn.sendPresenceUpdate('composing', from)
+                        await delay(1500)
+                        await conn.sendPresenceUpdate('paused', from)
+                        
                         await conn.sendMessage(from, { 
                             image: { url: global.banner }, 
                             caption: menu 
@@ -210,14 +291,14 @@ async function startBot() {
                         const s = Math.floor(uptime % 60)
                         const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)
                         
-                        await conn.sendMessage(from, { 
-                            text: `*ESTADO DEL BOT (TERMUX)*\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Owner: ${global.dev}` 
-                        }, { quoted: msg })
+                        await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev}`)
                         break
                         
                     case 'ping':
                     case 'p':
                         const start = Date.now()
+                        await conn.sendPresenceUpdate('composing', from)
+                        await delay(500)
                         const { key } = await conn.sendMessage(from, { text: 'Calculando...' }, { quoted: msg })
                         await conn.sendMessage(from, { text: `PONG!\nLatencia: ${Date.now() - start}ms`, edit: key })
                         break
@@ -227,9 +308,7 @@ async function startBot() {
                     case 'dueño':
                         const ownerNumber = global.owner[0][0]
                         const ownerName = global.dev
-                        await conn.sendMessage(from, { 
-                            text: `INFORMACION OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――` 
-                        }, { quoted: msg })
+                        await reply(`INFORMACION OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
                     case 'tag':
@@ -252,6 +331,9 @@ async function startBot() {
                             const targetParticipants = participants.map(p => p.id).filter(Boolean)
                             const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.[type]?.contextInfo
                             const quotedMsg = contextInfo?.quotedMessage
+
+                            await conn.sendPresenceUpdate('composing', from)
+                            await delay(1500)
 
                             if (quotedMsg) {
                                 const quotedType = Object.keys(quotedMsg)[0]
@@ -280,57 +362,107 @@ async function startBot() {
                     case 'play':
                     case 'mp3':
                         try {
-                            if (!args[0]) return reply('《✧》Por favor, menciona el nombre o URL de la música.')
+                            if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
                             const input_text = args.join(' ').trim()
-                            let videoIdBypass = null
-                            try { videoIdBypass = getVideoId(input_text) } catch {}
                             
-                            const query = videoIdBypass ? `https://youtu.be/${videoIdBypass}` : input_text
-                            const search = await yts(query)
-                            const video = search.videos?.[0]
+                            const searchOptions = {
+                                hl: 'es',
+                                gl: 'CR',
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
+                                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                                    'Referer': 'https://www.google.com/'
+                                }
+                            }
+
+                            let search = await yts({ query: input_text, ...searchOptions }).catch(() => null)
+                            let video = search?.videos?.[0]
                             if (!video) return reply('No se encontraron resultados.')
 
-                            await conn.sendMessage(from, { image: { url: video.image }, caption: `➩ Descargando Audio › *${video.title}*` }, { quoted: msg })
-                            
-                            const resultado = await descargarYT(video.url, 'mp3')
-                            const configAudio = {
-                                audio: resultado.tipo === 'url' ? { url: resultado.stream } : fs.readFileSync(resultado.stream),
-                                fileName: `${video.title}.mp3`,
-                                mimetype: 'audio/mpeg'
+                            if (CONFIG.bannerEnabled) {
+                                const captionInfo = `➩ *Descargando:*
+${video.title}
+
+│ ❖ *Canal:* ${video.author.name}
+│ ⏳ *Duración:* ${video.timestamp}
+│ ❀ *Vistas:* ${video.views.toLocaleString()}
+│ ☆ *Publicado:* ${video.ago}
+│ 🔗 *Enlace:* ${video.url}`
+
+                                await conn.sendPresenceUpdate('composing', from)
+                                await delay(1000)
+                                await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
                             }
                             
-                            await conn.sendMessage(from, configAudio, { quoted: msg })
-                            if (resultado.tipo === 'local') fs.unlinkSync(resultado.stream)
+                            await conn.sendPresenceUpdate('recording', from)
+                            
+                            const downloadUrl = await descargarYTMaycol(video.url, 'mp3')
+                            
+                            await conn.sendMessage(from, {
+                                audio: { url: downloadUrl },
+                                fileName: `${video.title}.mp3`,
+                                mimetype: 'audio/mpeg'
+                            }, { quoted: msg })
+                            
+                            await conn.sendPresenceUpdate('paused', from)
 
-                        } catch (e) { reply(`[Error]: ${e.message}`) }
+                        } catch (e) { 
+                            await conn.sendPresenceUpdate('paused', from)
+                            reply(`[Error]: ${e.message}`) 
+                        }
                         break
 
                     case 'play2':
                     case 'mp4':
                         try {
-                            if (!args[0]) return reply('《✧》Por favor, menciona el nombre o URL del video.')
+                            if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
                             const input_text = args.join(' ').trim()
-                            let videoIdBypass2 = null
-                            try { videoIdBypass2 = getVideoId(input_text) } catch {}
                             
-                            const query = videoIdBypass2 ? `https://youtu.be/${videoIdBypass2}` : input_text
-                            const search = await yts(query)
-                            const video = search.videos?.[0]
+                            const searchOptions = {
+                                hl: 'es',
+                                gl: 'CR',
+                                headers: {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0',
+                                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                                    'Referer': 'https://www.google.com/'
+                                }
+                            }
+
+                            let search = await yts({ query: input_text, ...searchOptions }).catch(() => null)
+                            let video = search?.videos?.[0]
                             if (!video) return reply('No se encontraron resultados.')
 
-                            await conn.sendMessage(from, { image: { url: video.image }, caption: `➩ Descargando Video › *${video.title}*` }, { quoted: msg })
-                            
-                            const resultado = await descargarYT(video.url, 'mp4')
-                            const configVideo = {
-                                video: resultado.tipo === 'url' ? { url: resultado.stream } : fs.readFileSync(resultado.stream),
-                                fileName: `${video.title}.mp4`,
-                                mimetype: 'video/mp4'
+                            if (CONFIG.bannerEnabled) {
+                                const captionInfo = `➩ *Descargando Video:*
+${video.title}
+
+│ ❖ *Canal:* ${video.author.name}
+│ ⏳ *Duración:* ${video.timestamp}
+│ ❀ *Vistas:* ${video.views.toLocaleString()}
+│ ☆ *Publicado:* ${video.ago}
+│ 🔗 *Enlace:* ${video.url}`
+
+                                await conn.sendPresenceUpdate('composing', from)
+                                await delay(1000)
+                                await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
                             }
                             
-                            await conn.sendMessage(from, configVideo, { quoted: msg })
-                            if (resultado.tipo === 'local') fs.unlinkSync(resultado.stream)
+                            await conn.sendPresenceUpdate('composing', from)
+                            
+                            const downloadUrl = await descargarYTMaycol(video.url, 'mp4')
+                            
+                            await conn.sendMessage(from, {
+                                video: { url: downloadUrl },
+                                fileName: `${video.title}.mp4`,
+                                mimetype: 'video/mp4'
+                            }, { quoted: msg })
+                            
+                            await conn.sendPresenceUpdate('paused', from)
 
-                        } catch (e) { reply(`[Error]: ${e.message}`) }
+                        } catch (e) { 
+                            await conn.sendPresenceUpdate('paused', from)
+                            reply(`[Error]: ${e.message}`) 
+                        }
                         break
                         
                     default:
@@ -342,19 +474,19 @@ async function startBot() {
     })
 
     // ==========================================
-    // CONTROL DE CONEXIÓN Y RECONEXIONES
+    // CONTROL DE CONEXIÓN
     // ==========================================
     conn.ev.on('connection.update', (u) => {
         if (u.connection === 'open') {
-            console.log(chalk.cyan('\n   ---------------------------------------\n    BOT DE TERMUX INICIADO CORRECTAMENTE\n   ---------------------------------------'))
+            console.log(chalk.cyan('\n   ---------------------------------------\n    BOT INICIADO CORRECTAMENTE EN TERMUX\n   ---------------------------------------'))
         }
         if (u.connection === 'close') {
             const reason = new Boom(u.lastDisconnect?.error)?.output.statusCode
             if (reason !== DisconnectReason.loggedOut) {
-                console.log(chalk.yellow('🔄 Conexión interrumpida. Reconectando en automático...'))
+                console.log(chalk.yellow('🔄 Conexión interrumpida. Reconectando...'))
                 startBot()
             } else {
-                console.log(chalk.red('❌ Sesión cerrada por WhatsApp. Limpiando archivos...'))
+                console.log(chalk.red('❌ Sesión cerrada. Eliminando archivos de sesión...'))
                 if (fs.existsSync(authFolder)) fs.rmSync(authFolder, { recursive: true, force: true })
                 process.exit(0)
             }
