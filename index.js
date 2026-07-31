@@ -201,7 +201,7 @@ async function startBot() {
                         await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
-                    // COMANDO TAG / MENCIÓN
+                    // COMANDO TAG / MENCIÓN INVISIBLE + MULTIMEDIA + BYPASS
                     case 'tag':
                     case 'all':
                     case 'invocar':
@@ -211,26 +211,35 @@ async function startBot() {
 
                             const groupMetadata = await conn.groupMetadata(from)
                             const participants = groupMetadata.participants
+                            
+                            // NÚMEROS PARA VERIFICAR ADMIN Y BYPASS
                             const senderNumber = sender.replace(/\D/g, '')
                             const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
                             const ownerNumberConfig = String(global.owner?.[0]?.[0] || '').replace(/\D/g, '')
-                            
-                            const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
-                            const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
 
-                            if (!isUserAdmin && !isOwner) return reply('「✎」 Este comando es solo para Administradores.')
+                            const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
+                            // BYPASS: Creador, Owner o Número del Bot
+                            const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev || senderNumber === '50612345678'
+
+                            if (!isUserAdmin && !isOwner) {
+                                return reply('「✎」 Este comando es solo para Administradores.')
+                            }
 
                             const targetParticipants = participants.map(p => p.id).filter(Boolean)
+                            
+                            // Mención invisible (Unicode Zero-Width Space)
+                            const invisibleTag = '\u200B'.repeat(100)
+
                             const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.[type]?.contextInfo
                             const quotedMsg = contextInfo?.quotedMessage
 
                             await conn.sendPresenceUpdate('composing', from)
 
-                            // Si se está respondiendo a un mensaje (imagen, texto, sticker, etc.)
+                            // 1. SI RESPONDISTE A UN MENSAJE (IMAGEN, VIDEO, TEXTO, STICKER, ETC.)
                             if (quotedMsg) {
                                 const quotedType = Object.keys(quotedMsg)[0]
                                 const contentToForward = {}
-                                contentToForward[quotedType] = quotedMsg[quotedType]
+                                contentToForward[quotedType] = JSON.parse(JSON.stringify(quotedMsg[quotedType]))
                                 
                                 if (!contentToForward.contextInfo) contentToForward.contextInfo = {}
                                 contentToForward.contextInfo.mentionedJid = targetParticipants
@@ -238,28 +247,39 @@ async function startBot() {
                                 let customText = args.join(' ').trim()
                                 if (customText) {
                                     if (quotedType === 'conversation') {
-                                        contentToForward.conversation = `${customText}\n\n${contentToForward.conversation}`
+                                        contentToForward.conversation = `${customText} ${invisibleTag}`
                                     } else if (quotedType === 'extendedTextMessage') {
-                                        contentToForward.extendedTextMessage.text = `${customText}\n\n${contentToForward.extendedTextMessage.text}`
+                                        contentToForward.extendedTextMessage.text = `${customText} ${invisibleTag}`
                                     } else if (contentToForward[quotedType] && 'caption' in contentToForward[quotedType]) {
-                                        contentToForward[quotedType].caption = `${customText}\n\n${contentToForward[quotedType].caption || ''}`
+                                        contentToForward[quotedType].caption = `${customText} ${invisibleTag}`
+                                    }
+                                } else {
+                                    if (quotedType === 'conversation') {
+                                        contentToForward.conversation += ` ${invisibleTag}`
+                                    } else if (quotedType === 'extendedTextMessage') {
+                                        contentToForward.extendedTextMessage.text += ` ${invisibleTag}`
+                                    } else if (contentToForward[quotedType] && 'caption' in contentToForward[quotedType]) {
+                                        contentToForward[quotedType].caption = `${contentToForward[quotedType].caption || ''} ${invisibleTag}`
                                     }
                                 }
+
                                 return await conn.sendMessage(from, contentToForward)
                             }
 
-                            // Si solo se manda texto normal
+                            // 2. SI ES SOLO TEXTO SIN RESPONDER A NADA
                             let textMessage = args.join(' ').trim()
-                            let mentionText = `📢 *INVASIÓN DE MIEMBROS*\n\n${textMessage ? `📝 *Mensaje:* ${textMessage}\n\n` : ''}`
-                            
-                            for (let mem of targetParticipants) {
-                                mentionText += `⚙️ @${mem.split('@')[0]}\n`
-                            }
+                            if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
 
-                            await conn.sendMessage(from, { text: mentionText, mentions: targetParticipants }, { quoted: msg })
+                            let fullTextMessage = `${textMessage} ${invisibleTag}`
+
+                            await conn.sendMessage(from, { 
+                                text: fullTextMessage, 
+                                mentions: targetParticipants 
+                            }, { quoted: msg })
+
                         } catch (e) { reply(`[Error]: ${e.message}`) }
                         break
-
+                        
                     // COMANDO DE AUDIO (NOTA DE VOZ)
                     case 'play':
                     case 'mp3':
