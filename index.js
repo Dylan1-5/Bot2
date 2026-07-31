@@ -123,7 +123,7 @@ async function startBot() {
                 
                 const reply = async (text) => {
                     await conn.sendPresenceUpdate('composing', from)
-                    await delay(1000)
+                    await delay(500)
                     await conn.sendPresenceUpdate('paused', from)
                     return conn.sendMessage(from, { text }, { quoted: msg })
                 }
@@ -144,22 +144,22 @@ async function startBot() {
 ――――――――――――――――――――
 
 [ COMANDOS ]
-● ${usedPrefix}ping
-> Ver velocidad del bot
+● ${usedPrefix}ping / ${usedPrefix}p
+> Ver tiempo de respuesta del bot
 ● ${usedPrefix}owner
 > Información de creador 
 ● ${usedPrefix}status
 > Ver estado
-● ${usedPrefix}play / ${usedPrefix}p
+● ${usedPrefix}play
 > Descargar nota de voz 
 ● ${usedPrefix}play2 / ${usedPrefix}v
 > Descargar video 
-● ${usedPrefix}tag
-> Mencionar a todos 
+● ${usedPrefix}tag / ${usedPrefix}all
+> Mencionar a todos los miembros
 ――――――――――――――――――――`
                         
                         await conn.sendPresenceUpdate('composing', from)
-                        await delay(1000)
+                        await delay(500)
                         await conn.sendPresenceUpdate('paused', from)
                         
                         if (global.banner) {
@@ -183,12 +183,14 @@ async function startBot() {
                         await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}`)
                         break
                         
+                    // MEDIDOR DE LATENCIA / TIEMPO DE REACCIÓN
                     case 'ping':
+                    case 'p':
                         const start = Date.now()
                         await conn.sendPresenceUpdate('composing', from)
-                        await delay(500)
-                        const { key } = await conn.sendMessage(from, { text: 'Calculando...' }, { quoted: msg })
-                        await conn.sendMessage(from, { text: `PONG!\nLatencia: ${Date.now() - start}ms`, edit: key })
+                        const { key } = await conn.sendMessage(from, { text: '⚡ Probando tiempo de reacción...' }, { quoted: msg })
+                        const latency = Date.now() - start
+                        await conn.sendMessage(from, { text: `🚀 *PONG!*\n⏱️ Tiempo de respuesta: *${latency} ms*`, edit: key })
                         break
                         
                     case 'owner':
@@ -196,13 +198,14 @@ async function startBot() {
                     case 'dueño':
                         const ownerNumber = global.owner?.[0]?.[0] || 'Sin número'
                         const ownerName = global.dev || 'Dy'
-                        await reply(`INFORMACION OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
+                        await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
+                    // COMANDO TAG / MENCIÓN
                     case 'tag':
                     case 'all':
-                    case 'invocar': 
-                    case '`': 
+                    case 'invocar':
+                    case 'totales': 
                         try {
                             if (!from.endsWith('@g.us')) return reply('「✎」 Este comando solo funciona en grupos.')
 
@@ -211,6 +214,7 @@ async function startBot() {
                             const senderNumber = sender.replace(/\D/g, '')
                             const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
                             const ownerNumberConfig = String(global.owner?.[0]?.[0] || '').replace(/\D/g, '')
+                            
                             const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
                             const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
 
@@ -221,8 +225,8 @@ async function startBot() {
                             const quotedMsg = contextInfo?.quotedMessage
 
                             await conn.sendPresenceUpdate('composing', from)
-                            await delay(1000)
 
+                            // Si se está respondiendo a un mensaje (imagen, texto, sticker, etc.)
                             if (quotedMsg) {
                                 const quotedType = Object.keys(quotedMsg)[0]
                                 const contentToForward = {}
@@ -233,21 +237,30 @@ async function startBot() {
 
                                 let customText = args.join(' ').trim()
                                 if (customText) {
-                                    if (quotedType === 'conversation') contentToForward.conversation = `${customText}\n\n${contentToForward.conversation}`
-                                    else if (quotedType === 'extendedTextMessage') contentToForward.extendedTextMessage.text = `${customText}\n\n${contentToForward.extendedTextMessage.text}`
-                                    else if (contentToForward[quotedType] && 'caption' in contentToForward[quotedType]) contentToForward[quotedType].caption = `${customText}\n\n${contentToForward[quotedType].caption || ''}`
+                                    if (quotedType === 'conversation') {
+                                        contentToForward.conversation = `${customText}\n\n${contentToForward.conversation}`
+                                    } else if (quotedType === 'extendedTextMessage') {
+                                        contentToForward.extendedTextMessage.text = `${customText}\n\n${contentToForward.extendedTextMessage.text}`
+                                    } else if (contentToForward[quotedType] && 'caption' in contentToForward[quotedType]) {
+                                        contentToForward[quotedType].caption = `${customText}\n\n${contentToForward[quotedType].caption || ''}`
+                                    }
                                 }
                                 return await conn.sendMessage(from, contentToForward)
                             }
 
+                            // Si solo se manda texto normal
                             let textMessage = args.join(' ').trim()
-                            if (!textMessage) return reply(`「✎」 Uso correcto:\n\n> *${usedPrefix + command}* mensaje`)
+                            let mentionText = `📢 *INVASIÓN DE MIEMBROS*\n\n${textMessage ? `📝 *Mensaje:* ${textMessage}\n\n` : ''}`
+                            
+                            for (let mem of targetParticipants) {
+                                mentionText += `⚙️ @${mem.split('@')[0]}\n`
+                            }
 
-                            await conn.sendMessage(from, { text: textMessage, mentions: targetParticipants }, { quoted: msg })
+                            await conn.sendMessage(from, { text: mentionText, mentions: targetParticipants }, { quoted: msg })
                         } catch (e) { reply(`[Error]: ${e.message}`) }
                         break
 
-                    case 'p':
+                    // COMANDO DE AUDIO (NOTA DE VOZ)
                     case 'play':
                     case 'mp3':
                     case 'audio':
@@ -274,13 +287,13 @@ ${video.title}
 │ 🔗 *Enlace:* ${video.url}`
 
                                 await conn.sendPresenceUpdate('composing', from)
-                                await delay(1000)
+                                await delay(500)
                                 await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
                             }
                             
                             await conn.sendPresenceUpdate('recording', from)
                             
-                            // DESCARGA LOCAL USANDO LIB/YTDL.JS
+                            // DESCARGA LOCAL AUDIO (VOICE NOTE)
                             const { filePath, cleanup } = await downloadMedia(video.url, 'vn')
                             
                             // ENVÍA COMO NOTA DE VOZ (PTT)
@@ -299,6 +312,7 @@ ${video.title}
                         }
                         break
 
+                    // COMANDO DE VIDEO (MP4)
                     case 'v':
                     case 'play2':
                     case 'mp4':
@@ -324,13 +338,13 @@ ${video.title}
 │ 🔗 *Enlace:* ${video.url}`
 
                                 await conn.sendPresenceUpdate('composing', from)
-                                await delay(1000)
+                                await delay(500)
                                 await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
                             }
                             
                             await conn.sendPresenceUpdate('composing', from)
                             
-                            // DESCARGA LOCAL MP4
+                            // DESCARGA LOCAL MP4 USANDO LA NUEVA LIBRERÍA
                             const { filePath, cleanup } = await downloadMedia(video.url, 'mp4')
                             
                             await conn.sendMessage(from, {
