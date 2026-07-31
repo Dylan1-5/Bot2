@@ -117,10 +117,56 @@ async function startBot() {
             const prefixList = Array.isArray(global.prefix) ? global.prefix : [global.prefix]
             const usedPrefix = prefixList.find(p => body.startsWith(p))
             
+            let command = ''
+            let args = []
+            let isCmd = false
+
+            // 1. SI SE USA PREFIJO NORMAL (Ej: /tag, /p, /play)
             if (usedPrefix !== undefined) {
-                const args = body.slice(usedPrefix.length).trim().split(/ +/)
-                const command = args.shift().toLowerCase()
-                
+                isCmd = true
+                args = body.slice(usedPrefix.length).trim().split(/ +/)
+                command = args.shift().toLowerCase()
+            } 
+            // 2. DETECTOR DE LENGUAJE NATURAL ("bot ...")
+            else if (body.toLowerCase().startsWith('bot ')) {
+                const textWithoutBot = body.slice(4).trim()
+                const lowerText = textWithoutBot.toLowerCase()
+
+                if (lowerText.includes('tag') || lowerText.includes('etiqueta') || lowerText.includes('menciona') || lowerText.includes('invoca')) {
+                    isCmd = true
+                    command = 'tag'
+                    const query = textWithoutBot.replace(/(haz|has|hace|un|manda|este|mensaje|tag|a|etiqueta|menciona|a|todos|invoca)/gi, '').trim()
+                    args = query ? query.split(/ +/) : []
+                } else if (lowerText.includes('audio') || lowerText.includes('musica') || lowerText.includes('cancion') || lowerText.includes('canción')) {
+                    isCmd = true
+                    command = 'play'
+                    const query = textWithoutBot.replace(/(busca|descarga|pon|pone|el|la|audio|musica|música|cancion|canción|de|en|youtube)/gi, '').trim()
+                    args = query ? query.split(/ +/) : []
+                } else if (lowerText.includes('video') || lowerText.includes('vídeo')) {
+                    isCmd = true
+                    command = 'play2'
+                    const query = textWithoutBot.replace(/(busca|descarga|pon|pone|el|la|video|vídeo|de|en|youtube)/gi, '').trim()
+                    args = query ? query.split(/ +/) : []
+                } else if (lowerText.includes('ping') || lowerText.includes('tiempo') || lowerText.includes('reaccion') || lowerText.includes('reacción') || lowerText.includes('latencia')) {
+                    isCmd = true
+                    command = 'ping'
+                    args = []
+                } else if (lowerText.includes('estado') || lowerText.includes('status') || lowerText.includes('ram')) {
+                    isCmd = true
+                    command = 'status'
+                    args = []
+                } else if (lowerText.includes('menu') || lowerText.includes('ayuda') || lowerText.includes('comandos')) {
+                    isCmd = true
+                    command = 'menu'
+                    args = []
+                } else if (lowerText.includes('creador') || lowerText.includes('owner') || lowerText.includes('dueño')) {
+                    isCmd = true
+                    command = 'owner'
+                    args = []
+                }
+            }
+
+            if (isCmd) {
                 const reply = async (text) => {
                     await conn.sendPresenceUpdate('composing', from)
                     await delay(500)
@@ -138,23 +184,23 @@ async function startBot() {
                     case 'ayuda':
                         const menu = `Hola ${pushName} 
 
-● Prefijo: ${usedPrefix}
+● Prefijo: ${usedPrefix || '/'}
 ● Dev: ${global.dev || 'Dy'}
 
 ――――――――――――――――――――
 
 [ COMANDOS ]
-● ${usedPrefix}ping / ${usedPrefix}p
+● ${usedPrefix || '/'}ping / ${usedPrefix || '/'}p
 > Ver tiempo de respuesta del bot
-● ${usedPrefix}owner
+● ${usedPrefix || '/'}owner
 > Información de creador 
-● ${usedPrefix}status
+● ${usedPrefix || '/'}status
 > Ver estado
-● ${usedPrefix}play
+● ${usedPrefix || '/'}play
 > Descargar nota de voz 
-● ${usedPrefix}play2 / ${usedPrefix}v
+● ${usedPrefix || '/'}play2 / ${usedPrefix || '/'}v
 > Descargar video 
-● ${usedPrefix}tag / ${usedPrefix}all
+● ${usedPrefix || '/'}tag / ${usedPrefix || '/'}all
 > Mencionar a todos los miembros
 ――――――――――――――――――――`
                         
@@ -201,8 +247,7 @@ async function startBot() {
                         await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
-                        
-// COMANDO TAG / MENCIÓN INVISIBLE + MULTIMEDIA + BYPASS
+                    // COMANDO TAG / MENCIÓN INVISIBLE + MULTIMEDIA + BYPASS
                     case 'tag':
                     case 'all':
                     case 'invocar':
@@ -249,17 +294,12 @@ async function startBot() {
                                     }, { quoted: msg })
                                 }
 
-                                // Si es imagen, video, audio o sticker citado, usamos el mensaje original como referencia de reenvío
+                                // Si es imagen, video, audio o sticker citado
                                 const quotedKey = {
                                     remoteJid: from,
                                     fromMe: contextInfo.participant === conn.user?.id,
                                     id: contextInfo.stanzaId,
                                     participant: contextInfo.participant
-                                }
-
-                                // Construir el mensaje reenviado con las menciones invisibles
-                                let forwardOptions = {
-                                    mentions: targetParticipants
                                 }
 
                                 return await conn.sendMessage(from, {
@@ -286,7 +326,7 @@ async function startBot() {
 
                         } catch (e) { reply(`[Error]: ${e.message}`) }
                         break
-                        
+
                     // COMANDO DE AUDIO (NOTA DE VOZ)
                     case 'play':
                     case 'mp3':
@@ -371,7 +411,7 @@ ${video.title}
                             
                             await conn.sendPresenceUpdate('composing', from)
                             
-                            // DESCARGA LOCAL MP4 USANDO LA NUEVA LIBRERÍA
+                            // DESCARGA LOCAL MP4 USANDO LA LIBRERÍA
                             const { filePath, cleanup } = await downloadMedia(video.url, 'mp4')
                             
                             await conn.sendMessage(from, {
@@ -390,7 +430,7 @@ ${video.title}
                         break
                         
                     default:
-                        if (body.startsWith(usedPrefix)) {
+                        if (usedPrefix !== undefined && body.startsWith(usedPrefix)) {
                             reply(`El comando *${usedPrefix}${command}* no existe.\nUsa *${usedPrefix}menu* para ver la lista de comandos.`)
                         }
                         break
