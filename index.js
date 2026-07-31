@@ -7,6 +7,7 @@ import fs from 'fs'
 import yts from 'yt-search'
 import readline from 'readline'
 import { downloadMedia } from './lib/ytdl.js'
+import { handleKick } from './lib/kick.js'
 
 const decodeJid = (jid) => {
     if (!jid) return jid
@@ -121,7 +122,7 @@ async function startBot() {
             let args = []
             let isCmd = false
 
-            // 1. SI SE USA PREFIJO NORMAL (Ej: /tag, /p, /play)
+            // 1. SI SE USA PREFIJO NORMAL (Ej: /tag, /p, /play, /kick)
             if (usedPrefix !== undefined) {
                 isCmd = true
                 args = body.slice(usedPrefix.length).trim().split(/ +/)
@@ -136,6 +137,11 @@ async function startBot() {
                     isCmd = true
                     command = 'tag'
                     const query = textWithoutBot.replace(/(haz|has|hace|un|manda|este|mensaje|tag|a|etiqueta|menciona|a|todos|invoca)/gi, '').trim()
+                    args = query ? query.split(/ +/) : []
+                } else if (lowerText.includes('saca') || lowerText.includes('sácalo') || lowerText.includes('sacalo') || lowerText.includes('elimina') || lowerText.includes('kick') || lowerText.includes('banear')) {
+                    isCmd = true
+                    command = 'kick'
+                    const query = textWithoutBot.replace(/(sácalo|sacalo|saca|elimina|banear|a|al|este|usuario|kick|del|grupo)/gi, '').trim()
                     args = query ? query.split(/ +/) : []
                 } else if (lowerText.includes('audio') || lowerText.includes('musica') || lowerText.includes('cancion') || lowerText.includes('canción')) {
                     isCmd = true
@@ -191,9 +197,7 @@ async function startBot() {
 
 [ COMANDOS ]
 ● ${usedPrefix || '/'}ping / ${usedPrefix || '/'}p
-> Ver tiempo de respuesta del bot
-● ${usedPrefix || '/'}owner
-> Información de creador 
+> Ver tiempo de respuesta
 ● ${usedPrefix || '/'}status
 > Ver estado
 ● ${usedPrefix || '/'}play
@@ -201,7 +205,9 @@ async function startBot() {
 ● ${usedPrefix || '/'}play2 / ${usedPrefix || '/'}v
 > Descargar video 
 ● ${usedPrefix || '/'}tag / ${usedPrefix || '/'}all
-> Mencionar a todos los miembros
+> Mencionar a todos
+● ${usedPrefix || '/'}kick / ${usedPrefix || '/'}ban / ${usedPrefix || '/'}sacar
+> Eliminar usuario (o 'bot saca a...')
 ――――――――――――――――――――`
                         
                         await conn.sendPresenceUpdate('composing', from)
@@ -229,7 +235,6 @@ async function startBot() {
                         await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}`)
                         break
                         
-                    // MEDIDOR DE LATENCIA / TIEMPO DE REACCIÓN
                     case 'ping':
                     case 'p':
                         const start = Date.now()
@@ -247,7 +252,42 @@ async function startBot() {
                         await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                         break
 
-                    // COMANDO TAG / MENCIÓN INVISIBLE + MULTIMEDIA + BYPASS
+                    // ==========================================
+                    // ACTIVADOR DEL COMANDO SACAR / KICK
+                    // ==========================================
+                    case 'kick':
+                    case 'ban':
+                    case 'sacar':
+                        try {
+                            if (!from.endsWith('@g.us')) return reply('「✎」 Este comando solo funciona en grupos.')
+
+                            const groupMetadata = await conn.groupMetadata(from)
+                            const participants = groupMetadata.participants
+                            
+                            // VERIFICAMOS PERMISOS (QUIEN LO EJECUTA Y EL BOT)
+                            const senderNumber = sender.replace(/\D/g, '')
+                            const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
+                            const ownerNumberConfig = String(global.owner?.[0]?.[0] || '').replace(/\D/g, '')
+
+                            const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
+                            const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
+
+                            if (!isUserAdmin && !isOwner) {
+                                return reply('「✎」 Este comando es solo para Administradores.')
+                            }
+
+                            const isBotAdmin = participants.find(p => p.id === botNumber + '@s.whatsapp.net')?.admin !== null
+                            if (!isBotAdmin) {
+                                return reply('「✎」 No puedo eliminar a nadie porque el bot no es administrador del grupo.')
+                            }
+
+                            // LLAMAMOS A LA LIBRERIA EXTERNA
+                            await handleKick(conn, from, msg, args, participants, groupMetadata, usedPrefix, command)
+
+                        } catch (e) { reply(`[Error al expulsar]: ${e.message}`) }
+                        break
+
+                    // COMANDO TAG
                     case 'tag':
                     case 'all':
                     case 'invocar':
@@ -258,13 +298,11 @@ async function startBot() {
                             const groupMetadata = await conn.groupMetadata(from)
                             const participants = groupMetadata.participants
                             
-                            // NÚMEROS PARA VERIFICAR ADMIN Y BYPASS
                             const senderNumber = sender.replace(/\D/g, '')
                             const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
                             const ownerNumberConfig = String(global.owner?.[0]?.[0] || '').replace(/\D/g, '')
 
                             const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
-                            // BYPASS: Creador, Owner o Número del Bot
                             const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
 
                             if (!isUserAdmin && !isOwner) {
@@ -279,13 +317,11 @@ async function startBot() {
 
                             await conn.sendPresenceUpdate('composing', from)
 
-                            // 1. SI RESPONDISTE A UN MENSAJE (CITADO)
                             if (quotedMsg) {
                                 const quotedType = Object.keys(quotedMsg)[0]
                                 const quotedContent = quotedMsg[quotedType]
                                 let customText = args.join(' ').trim()
 
-                                // Si es un mensaje de texto citado
                                 if (quotedType === 'conversation' || quotedType === 'extendedTextMessage') {
                                     let textToFormat = customText || quotedContent.text || quotedContent || ''
                                     return await conn.sendMessage(from, {
@@ -294,7 +330,6 @@ async function startBot() {
                                     }, { quoted: msg })
                                 }
 
-                                // Si es imagen, video, audio o sticker citado
                                 const quotedKey = {
                                     remoteJid: from,
                                     fromMe: contextInfo.participant === conn.user?.id,
@@ -313,7 +348,6 @@ async function startBot() {
                                 })
                             }
 
-                            // 2. SI ES SOLO TEXTO DIRECTO (SIN RESPONDER A NADA)
                             let textMessage = args.join(' ').trim()
                             if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
 
@@ -327,7 +361,7 @@ async function startBot() {
                         } catch (e) { reply(`[Error]: ${e.message}`) }
                         break
 
-                    // COMANDO DE AUDIO (NOTA DE VOZ)
+                    // COMANDO DE AUDIO
                     case 'play':
                     case 'mp3':
                     case 'audio':
@@ -360,10 +394,8 @@ ${video.title}
                             
                             await conn.sendPresenceUpdate('recording', from)
                             
-                            // DESCARGA LOCAL AUDIO (VOICE NOTE)
                             const { filePath, cleanup } = await downloadMedia(video.url, 'vn')
                             
-                            // ENVÍA COMO NOTA DE VOZ (PTT)
                             await conn.sendMessage(from, {
                                 audio: fs.readFileSync(filePath),
                                 mimetype: 'audio/ogg; codecs=opus',
@@ -379,7 +411,7 @@ ${video.title}
                         }
                         break
 
-                    // COMANDO DE VIDEO (MP4)
+                    // COMANDO DE VIDEO
                     case 'v':
                     case 'play2':
                     case 'mp4':
@@ -411,7 +443,6 @@ ${video.title}
                             
                             await conn.sendPresenceUpdate('composing', from)
                             
-                            // DESCARGA LOCAL MP4 USANDO LA LIBRERÍA
                             const { filePath, cleanup } = await downloadMedia(video.url, 'mp4')
                             
                             await conn.sendMessage(from, {
