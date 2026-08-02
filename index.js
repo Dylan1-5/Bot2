@@ -210,7 +210,7 @@ export async function handleMessage(conn, m) {
                 // ==========================================
                 case 'serbot':
                 case 'subbot':
-                case 'jadibot':
+                case 'code':
                     try {
                         const numInput = args[0] || sender.replace(/\D/g, '')
                         await startSubBot(conn, from, msg, numInput)
@@ -236,7 +236,7 @@ export async function handleMessage(conn, m) {
                     }
                     break
 
-                case 'listbots':
+                case 'bots':
                 case 'subbots':
                     try {
                         if (subBots.size === 0) return reply('《✧》 No hay Sub Bots activos en este momento.')
