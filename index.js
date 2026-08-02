@@ -200,7 +200,7 @@ export async function handleMessage(conn, m) {
                 case 'owner':
                 case 'creador':
                 case 'dueño':
-                    const ownerNumber = global.owner?.[0]?.[0] || 'Sin número'
+                    const ownerNumber = global.owner?.[0]?.[0] || global.owner?.[0] || 'Sin número'
                     const ownerName = global.dev || 'Dy'
                     await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                     break
@@ -210,7 +210,7 @@ export async function handleMessage(conn, m) {
                 // ==========================================
                 case 'serbot':
                 case 'subbot':
-                case 'code':
+                case 'jadibot':
                     try {
                         const numInput = args[0] || sender.replace(/\D/g, '')
                         await startSubBot(conn, from, msg, numInput)
@@ -236,7 +236,7 @@ export async function handleMessage(conn, m) {
                     }
                     break
 
-                case 'bots':
+                case 'listbots':
                 case 'subbots':
                     try {
                         if (subBots.size === 0) return reply('《✧》 No hay Sub Bots activos en este momento.')
@@ -265,10 +265,12 @@ export async function handleMessage(conn, m) {
                         // VERIFICAMOS PERMISOS (QUIEN LO EJECUTA Y EL BOT)
                         const senderNumber = sender.replace(/\D/g, '')
                         const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
-                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || '').replace(/\D/g, '')
+                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
 
                         const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
-                        const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
+                        const isOwner = senderNumber === botNumber || 
+                                        (ownerNumberConfig && senderNumber === ownerNumberConfig) || 
+                                        pushName === global.dev
 
                         if (!isUserAdmin && !isOwner) {
                             return reply('「✎」 Este comando es solo para Administradores.')
@@ -298,10 +300,12 @@ export async function handleMessage(conn, m) {
                         
                         const senderNumber = sender.replace(/\D/g, '')
                         const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
-                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || '').replace(/\D/g, '')
+                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
 
                         const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
-                        const isOwner = senderNumber === botNumber || senderNumber === ownerNumberConfig || pushName === global.dev
+                        const isOwner = senderNumber === botNumber || 
+                                        (ownerNumberConfig && senderNumber === ownerNumberConfig) || 
+                                        pushName === global.dev
 
                         if (!isUserAdmin && !isOwner) {
                             return reply('「✎」 Este comando es solo para Administradores.')
@@ -496,7 +500,7 @@ async function startBot() {
     // PEDIR NÚMERO EN LA TERMINAL SI NO HAY SESIÓN
     if (!fs.existsSync(`./${authFolder}/creds.json`) && !conn.authState.creds.registered) {
         console.log(chalk.cyan('\n======================================'))
-        console.log(chalk.cyan('       CONFIGURACIÓN DE TERMUX'))
+        console.log(chalk.cyan('        CONFIGURACIÓN DE TERMUX'))
         console.log(chalk.cyan('======================================\n'))
 
         let phoneNumber = await question(chalk.yellow('Ingresa tu número de WhatsApp (Ej: 50612345678): '))
@@ -510,7 +514,7 @@ async function startBot() {
                     codeBot = codeBot.match(/.{1,4}/g)?.join("-") || codeBot
                     console.log(chalk.green('======================================'))
                     console.log(chalk.green('🔑 TU CÓDIGO DE VINCULACIÓN ES:'))
-                    console.log(chalk.white(`👉   ${codeBot}   👈`))
+                    console.log(chalk.white(`👉    ${codeBot}    👈`))
                     console.log(chalk.green('======================================\n'))
                 } catch (err) {
                     console.error(chalk.red('❌ Error al solicitar código:'), err)
