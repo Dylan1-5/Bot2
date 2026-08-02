@@ -35,6 +35,7 @@ global.owner = [
 global.dev = 'Dy' // Tu nombre o alias
 global.botName = 'Bot_2' // Nombre de tu bot
 global.prefix = ['/'] // Prefijo por defecto (usa .)
+global.subPrefix = ['#']
 global.banner = 'https://files.catbox.moe/u2viza.jpg' // Banner del menu 
 
 // FUNCIÓN DE RECARGA AUTOMÁTICA
