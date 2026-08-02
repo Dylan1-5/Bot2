@@ -69,7 +69,7 @@ export async function handleMessage(conn, m) {
         let args = []
         let isCmd = false
 
-        // 1. SI SE USA PREFIJO NORMAL (Ej: /tag, /p, /play, /kick)
+        // 1. SI SE USA PREFIJO NORMAL
         if (usedPrefix !== undefined) {
             isCmd = true
             args = body.slice(usedPrefix.length).trim().split(/ +/)
@@ -137,7 +137,7 @@ export async function handleMessage(conn, m) {
                 case 'ayuda':
                     const menu = `Hola ${pushName} 
 
-● Prefijo: ${usedPrefix || '/'}
+● Prefijo actual: ${usedPrefix || global.prefix[0] || '/'}
 ● Dev: ${global.dev || 'Dy'}
 
 ――――――――――――――――――――
@@ -155,6 +155,8 @@ export async function handleMessage(conn, m) {
 > Mencionar a todos
 ● ${usedPrefix || '/'}kick / ${usedPrefix || '/'}ban / ${usedPrefix || '/'}sacar
 > Eliminar usuario (o 'bot saca a...')
+● ${usedPrefix || '/'}setprefix <nuevo_prefijo>
+> Cambiar el prefijo del Bot
 ● ${usedPrefix || '/'}serbot / ${usedPrefix || '/'}jadibot
 > Conectar tu número como Sub Bot
 ● ${usedPrefix || '/'}stopbot
@@ -206,14 +208,38 @@ export async function handleMessage(conn, m) {
                     break
 
                 // ==========================================
+                // COMANDO PARA CAMBIAR PREFIJO
+                // ==========================================
+                case 'setprefix':
+                case 'prefix':
+                case 'cambiarprefijo':
+                    try {
+                        const senderNumber = sender.replace(/\D/g, '')
+                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
+                        const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
+
+                        if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
+                        if (!args[0]) return reply(`「✎」 Ingresa el nuevo prefijo. Ejemplo: *${usedPrefix || '/'}setprefix !*`)
+
+                        const newPrefix = args[0]
+                        global.subprefix = [newPrefix]
+                        reply(`✅ *Prefijo cambiado con éxito.*\nEl nuevo prefijo ahora es: *${newPrefix}*`)
+                    } catch (e) {
+                        reply(`[Error al cambiar prefijo]: ${e.message}`)
+                    }
+                    break
+
+                // ==========================================
                 // COMANDOS DE SUB BOTS
                 // ==========================================
                 case 'serbot':
                 case 'subbot':
                 case 'code':
+                case 'jadibot':
                     try {
                         const numInput = args[0] || sender.replace(/\D/g, '')
-                        await startSubBot(conn, from, msg, numInput)
+                        // PASAMOS handleMessage AQUI TAMBIÉN
+                        await startSubBot(conn, from, msg, numInput, handleMessage)
                     } catch (e) {
                         reply(`[Error en Sub Bot]: ${e.message}`)
                     }
@@ -238,6 +264,7 @@ export async function handleMessage(conn, m) {
 
                 case 'bots':
                 case 'subbots':
+                case 'listbots':
                     try {
                         if (subBots.size === 0) return reply('《✧》 No hay Sub Bots activos en este momento.')
                         let txt = `《✧》 *LISTA DE SUB BOTS ACTIVOS* (${subBots.size})\n\n`
@@ -251,7 +278,7 @@ export async function handleMessage(conn, m) {
                     break
 
                 // ==========================================
-                // ACTIVADOR DEL COMANDO SACAR / KICK
+                // COMANDO SACAR / KICK
                 // ==========================================
                 case 'kick':
                 case 'ban':
@@ -262,7 +289,6 @@ export async function handleMessage(conn, m) {
                         const groupMetadata = await conn.groupMetadata(from)
                         const participants = groupMetadata.participants
                         
-                        // VERIFICAMOS PERMISOS (QUIEN LO EJECUTA Y EL BOT)
                         const senderNumber = sender.replace(/\D/g, '')
                         const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
                         const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
@@ -281,7 +307,6 @@ export async function handleMessage(conn, m) {
                             return reply('「✎」 No puedo eliminar a nadie porque el bot no es administrador del grupo.')
                         }
 
-                        // LLAMAMOS A LA LIBRERIA EXTERNA
                         await handleKick(conn, from, msg, args, participants, groupMetadata, usedPrefix, command)
 
                     } catch (e) { reply(`[Error al expulsar]: ${e.message}`) }
@@ -537,8 +562,9 @@ async function startBot() {
     conn.ev.on('connection.update', (u) => {
         if (u.connection === 'open') {
             console.log(chalk.cyan('\n   ---------------------------------------\n    BOT INICIADO CORRECTAMENTE EN TERMUX\n   ---------------------------------------'))
-            // CARGA LOS SUB BOTS GUARDADOS AL INICIAR
-            loadAllSubBots(conn)
+            
+            // AHORA SÍ SE LE PASA 'handleMessage' A LOS SUB BOTS
+            loadAllSubBots(conn, handleMessage)
         }
         if (u.connection === 'close') {
             const reason = new Boom(u.lastDisconnect?.error)?.output.statusCode
