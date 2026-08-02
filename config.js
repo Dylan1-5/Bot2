@@ -1,30 +1,8 @@
 import { watchFile, unwatchFile } from 'fs'
-import  chalk  from 'chalk'
+import chalk from 'chalk'
 import { fileURLToPath } from 'url'
 
-
 // CONFIGURACIÓN BÁSICA PARA BOT DE WHATSAPP
-// ==========================================
-// global.owner - Números de los dueños del bot
-//   - Primer array: número principal (owner real)
-//   - Segundo array: número lid
-//   - Formato: ['número'] (con código de país)
-//   - Ejemplo: ['5211234567890']
-//
-// global.dev - Tu nombre o alias
-//   - Aparecerá en el menú y respuestas
-//
-// global.botName - Nombre de tu bot
-//   - Aparecerá en mensajes y logs
-//
-// global.prefix - Prefijos para comandos
-//   - Array con uno o más prefijos
-//   - Ejemplo: ['.'] o ['!', '/']
-//
-// global.banner - URL de imagen para el menú
-//   - Debe ser enlace directo a imagen
-
-// By - CORVETTE SCRIPT
 // ==========================================
 
 global.owner = [
@@ -34,9 +12,9 @@ global.owner = [
 
 global.dev = 'Dy' // Tu nombre o alias
 global.botName = 'Bot_2' // Nombre de tu bot
-global.prefix = ['/'] // Prefijo por defecto (usa .)
+global.prefix = ['/'] // Prefijo por defecto
 global.subPrefix = ['#']
-global.banner = 'https://files.catbox.moe/u2viza.jpg' // Banner del menu 
+global.banner = 'https://files.catbox.moe/u2viza.jpg' // Banner del menú 
 
 // FUNCIÓN DE RECARGA AUTOMÁTICA
 const file = fileURLToPath(import.meta.url)
