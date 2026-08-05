@@ -42,9 +42,9 @@ const question = (text) => {
 // ==========================================
 // LÓGICA DE PROCESAMIENTO DE MENSAJES (SHARED)
 // ==========================================
-export async function handleMessage(conn, m) {
+export async function handleMessage(conn, m, options = {}) {
     try {
-        const msg = m.messages[0]
+        const msg = m.messages?.[0] || m[0]
         if (!msg || !msg.message) return
 
         const from = msg.key.remoteJid
@@ -61,8 +61,15 @@ export async function handleMessage(conn, m) {
 
         console.log(chalk.gray(`[${new Date().toLocaleTimeString()}]`), chalk.cyan(`${pushName}:`), chalk.white(body || '[MEDIA]'))
 
-        // LECTURA DE PREFIJO DESDE CONFIG.JS
-        const prefixList = Array.isArray(global.prefix) ? global.prefix : [global.prefix]
+        // ==========================================
+        // DETECCIÓN DE PREFIJO SEGÚN SUB BOT
+        // ==========================================
+        // Si viene enviado desde subbot.js (options.isSubBot === true), toma el subprefix
+        const activePrefix = options.isSubBot 
+            ? (options.prefix || global.subPrefix || global.subprefix || ['#'])
+            : (global.prefix || ['/'])
+
+        const prefixList = Array.isArray(activePrefix) ? activePrefix : [activePrefix]
         const usedPrefix = prefixList.find(p => body.startsWith(p))
         
         let command = ''
@@ -137,31 +144,33 @@ export async function handleMessage(conn, m) {
                 case 'ayuda':
                     const menu = `Hola ${pushName} 
 
-● Prefijo actual: ${usedPrefix || global.prefix[0] || '/'}
+● Prefijo activo: ${usedPrefix || prefixList[0]}
 ● Dev: ${global.dev || 'Dy'}
 
 ――――――――――――――――――――
 
 [ COMANDOS ]
-● ${usedPrefix || '/'}ping / ${usedPrefix || '/'}p
+● ${usedPrefix || prefixList[0]}ping / ${usedPrefix || prefixList[0]}p
 > Ver tiempo de respuesta
-● ${usedPrefix || '/'}status
+● ${usedPrefix || prefixList[0]}status
 > Ver estado
-● ${usedPrefix || '/'}play
+● ${usedPrefix || prefixList[0]}play
 > Descargar nota de voz 
-● ${usedPrefix || '/'}play2 / ${usedPrefix || '/'}v
+● ${usedPrefix || prefixList[0]}play2 / ${usedPrefix || prefixList[0]}v
 > Descargar video 
-● ${usedPrefix || '/'}tag / ${usedPrefix || '/'}all
+● ${usedPrefix || prefixList[0]}tag / ${usedPrefix || prefixList[0]}all
 > Mencionar a todos
-● ${usedPrefix || '/'}kick / ${usedPrefix || '/'}ban / ${usedPrefix || '/'}sacar
+● ${usedPrefix || prefixList[0]}kick / ${usedPrefix || prefixList[0]}ban / ${usedPrefix || prefixList[0]}sacar
 > Eliminar usuario (o 'bot saca a...')
-● ${usedPrefix || '/'}setprefix <nuevo_prefijo>
-> Cambiar el prefijo del Bot
-● ${usedPrefix || '/'}serbot / ${usedPrefix || '/'}jadibot
+● ${usedPrefix || prefixList[0]}setprefix <prefijo>
+> Cambiar el prefijo del Bot Principal
+● ${usedPrefix || prefixList[0]}subprefix <prefijo>
+> Cambiar el prefijo global de Sub Bots
+● ${usedPrefix || prefixList[0]}serbot / ${usedPrefix || prefixList[0]}jadibot
 > Conectar tu número como Sub Bot
-● ${usedPrefix || '/'}stopbot
+● ${usedPrefix || prefixList[0]}stopbot
 > Desconectar tu Sub Bot
-● ${usedPrefix || '/'}subbots / ${usedPrefix || '/'}listbots
+● ${usedPrefix || prefixList[0]}subbots / ${usedPrefix || prefixList[0]}listbots
 > Ver lista de Sub Bots activos
 ――――――――――――――――――――`
                     
@@ -208,24 +217,42 @@ export async function handleMessage(conn, m) {
                     break
 
                 // ==========================================
-                // COMANDO PARA CAMBIAR PREFIJO
+                // GESTIÓN DE PREFIJOS (MAIN Y SUBPREFIX)
                 // ==========================================
                 case 'setprefix':
                 case 'prefix':
-                case 'cambiarprefijo':
                     try {
                         const senderNumber = sender.replace(/\D/g, '')
                         const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
                         const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
 
                         if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
-                        if (!args[0]) return reply(`「✎」 Ingresa el nuevo prefijo. Ejemplo: *${usedPrefix || '/'}setprefix !*`)
+                        if (!args[0]) return reply(`「✎」 Ingresa el nuevo prefijo del Bot Principal. Ejemplo: *${usedPrefix || '/'}setprefix !*`)
 
-                        const newPrefix = args[0]
-                        global.subprefix = [newPrefix]
-                        reply(`✅ *Prefijo cambiado con éxito.*\nEl nuevo prefijo ahora es: *${newPrefix}*`)
+                        global.prefix = [args[0]]
+                        reply(`✅ *Prefijo del Bot Principal cambiado a:* *${args[0]}*`)
                     } catch (e) {
-                        reply(`[Error al cambiar prefijo]: ${e.message}`)
+                        reply(`[Error]: ${e.message}`)
+                    }
+                    break
+
+                case 'subprefix':
+                case 'setsubprefix':
+                    try {
+                        const senderNumber = sender.replace(/\D/g, '')
+                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
+                        const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
+
+                        if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
+                        if (!args[0]) return reply(`「✎」 Ingresa el nuevo prefijo para los Sub Bots. Ejemplo: *${usedPrefix || '/'}subprefix #*`)
+
+                        const newSubPrefix = args[0]
+                        global.subPrefix = [newSubPrefix]
+                        global.subprefix = [newSubPrefix]
+
+                        reply(`🤖 *Prefijo global de Sub Bots actualizado a:* *${newSubPrefix}*`)
+                    } catch (e) {
+                        reply(`[Error]: ${e.message}`)
                     }
                     break
 
@@ -238,7 +265,6 @@ export async function handleMessage(conn, m) {
                 case 'jadibot':
                     try {
                         const numInput = args[0] || sender.replace(/\D/g, '')
-                        // PASAMOS handleMessage AQUI TAMBIÉN
                         await startSubBot(conn, from, msg, numInput, handleMessage)
                     } catch (e) {
                         reply(`[Error en Sub Bot]: ${e.message}`)
@@ -557,13 +583,13 @@ async function startBot() {
     })
 
     // ==========================================
-    // CONTROL DE CONEXIÓN
+    // CONTROL DE CONEXIÓN Y CARGA DE SUB BOTS
     // ==========================================
     conn.ev.on('connection.update', (u) => {
         if (u.connection === 'open') {
             console.log(chalk.cyan('\n   ---------------------------------------\n    BOT INICIADO CORRECTAMENTE EN TERMUX\n   ---------------------------------------'))
             
-            // AHORA SÍ SE LE PASA 'handleMessage' A LOS SUB BOTS
+            // Carga todos los Sub Bots guardados enviándoles la función handleMessage
             loadAllSubBots(conn, handleMessage)
         }
         if (u.connection === 'close') {
