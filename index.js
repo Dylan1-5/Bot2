@@ -1,14 +1,23 @@
 import './config.js'
-import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, makeCacheableSignalKeyStore, delay } from '@whiskeysockets/baileys'
+import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, makeCacheableSignalKeyStore, delay, downloadMediaMessage, downloadContentFromMessage, getContentType } from '@whiskeysockets/baileys'
 import P from 'pino'
 import chalk from 'chalk'
 import { Boom } from '@hapi/boom'
 import fs from 'fs'
+import path from 'path'
+import { exec } from 'child_process'
+import util from 'util'
 import yts from 'yt-search'
 import readline from 'readline'
-import { downloadMedia } from './lib/ytdl.js'
+import { GoogleGenAI } from '@google/genai' // Importación de la IA
+import { downloadMedia as downloadYtMedia } from './lib/ytdl.js'
 import { handleKick } from './lib/kick.js'
 import { startSubBot, loadAllSubBots, subBots } from './lib/subbot.js'
+
+const execPromise = util.promisify(exec)
+
+// Inicialización de la IA (puedes definir global.geminiKey en config.js o cambiarlo aquí)
+const ai = new GoogleGenAI({ apiKey: global.geminiKey || process.env.GEMINI_API_KEY || '' })
 
 const decodeJid = (jid) => {
     if (!jid) return jid
@@ -23,9 +32,54 @@ const CONFIG = {
     bannerEnabled: true
 }
 
-// ==========================================
-// INTERFAZ DE CONSOLA PARA TERMUX
-// ==========================================
+// Helper para descargar archivos multimedia
+async function downloadMedia(m, conn) {
+    try {
+        let message = m.message
+        if (!message) throw new Error('No se encontró contenido en el mensaje')
+
+        if (message.ephemeralMessage) message = message.ephemeralMessage.message
+        if (message.viewOnceMessage) message = message.viewOnceMessage.message
+        if (message.viewOnceMessageV2) message = message.viewOnceMessageV2.message
+        if (message.viewOnceMessageV2Extension) message = message.viewOnceMessageV2Extension.message
+        if (message.documentWithCaptionMessage) message = message.documentWithCaptionMessage.message
+
+        try {
+            const buffer = await downloadMediaMessage(
+                { message },
+                'buffer',
+                {},
+                {
+                    logger: P({ level: 'silent' }),
+                    reuploadRequest: conn ? conn.updateMediaMessage : undefined
+                }
+            )
+            if (buffer && buffer.length > 0) return buffer
+        } catch (e) {
+            console.log(chalk.yellow('[DownloadMedia] Falló método principal, intentando método secundario...'))
+        }
+
+        const type = getContentType(message)
+        const mediaObj = message[type] || message.videoMessage || message.imageMessage || message.audioMessage
+
+        if (!mediaObj) throw new Error('El mensaje no contiene ningún archivo multimedia válido')
+
+        let streamType = type ? type.replace('Message', '') : 'video'
+        if (streamType === 'ptv') streamType = 'video'
+
+        const stream = await downloadContentFromMessage(mediaObj, streamType)
+        let buffer = Buffer.from([])
+
+        for await (const chunk of stream) {
+            buffer = Buffer.concat([buffer, chunk])
+        }
+
+        return buffer
+    } catch (error) {
+        throw new Error(`Error al descargar media: ${error.message}`)
+    }
+}
+
 const question = (text) => {
     const rl = readline.createInterface({
         input: process.stdin,
@@ -39,9 +93,6 @@ const question = (text) => {
     })
 }
 
-// ==========================================
-// LÓGICA DE PROCESAMIENTO DE MENSAJES (SHARED)
-// ==========================================
 export async function handleMessage(conn, m, options = {}) {
     try {
         const msg = m.messages?.[0] || m[0]
@@ -61,10 +112,6 @@ export async function handleMessage(conn, m, options = {}) {
 
         console.log(chalk.gray(`[${new Date().toLocaleTimeString()}]`), chalk.cyan(`${pushName}:`), chalk.white(body || '[MEDIA]'))
 
-        // ==========================================
-        // DETECCIÓN DE PREFIJO SEGÚN SUB BOT
-        // ==========================================
-        // Si viene enviado desde subbot.js (options.isSubBot === true), toma el subprefix
         const activePrefix = options.isSubBot 
             ? (options.prefix || global.subPrefix || global.subprefix || ['#'])
             : (global.prefix || ['/'])
@@ -87,7 +134,13 @@ export async function handleMessage(conn, m, options = {}) {
             const textWithoutBot = body.slice(4).trim()
             const lowerText = textWithoutBot.toLowerCase()
 
-            if (lowerText.includes('tag') || lowerText.includes('etiqueta') || lowerText.includes('menciona') || lowerText.includes('invoca')) {
+            // DETECCION DE "bot haz..." / "bot hace..." CON INTELIGENCIA ARTIFICIAL
+            if (lowerText.startsWith('haz ') || lowerText.startsWith('hace ') || lowerText.startsWith('hazlo ') || lowerText.startsWith('que ')) {
+                isCmd = true
+                command = 'ai_task'
+                const taskQuery = textWithoutBot.replace(/^(haz|hace|hazlo|que)\s+/i, '').trim()
+                args = taskQuery ? [taskQuery] : []
+            } else if (lowerText.includes('tag') || lowerText.includes('etiqueta') || lowerText.includes('menciona') || lowerText.includes('invoca')) {
                 isCmd = true
                 command = 'tag'
                 const query = textWithoutBot.replace(/(haz|has|hace|un|manda|este|mensaje|tag|a|etiqueta|menciona|a|todos|invoca)/gi, '').trim()
@@ -139,6 +192,35 @@ export async function handleMessage(conn, m, options = {}) {
             }
             
             switch (command) {
+                // ==========================================
+                // TAREA O PREGUNTA ENVIADA A LA IA ("bot haz esto...")
+                // ==========================================
+                case 'ai_task': {
+                    try {
+                        const prompt = args.join(' ')
+                        if (!prompt) return reply('「✎」 Dime qué quieres que haga. Ejemplo: *bot haz un resumen de la fotosíntesis*')
+
+                        await react('🧠')
+                        await conn.sendPresenceUpdate('composing', from)
+
+                        const response = await ai.models.generateContent({
+                            model: 'gemini-2.5-flash',
+                            contents: prompt,
+                            config: {
+                                systemInstruction: "Eres un asistente de WhatsApp atento, servicial y directo. Responde adecuadamente a la instrucción o petición del usuario."
+                            }
+                        })
+
+                        await conn.sendPresenceUpdate('paused', from)
+                        await reply(response.text)
+                    } catch (e) {
+                        await conn.sendPresenceUpdate('paused', from)
+                        console.error('[Error IA]:', e)
+                        reply(`[Error de IA]: ${e.message}`)
+                    }
+                    break
+                }
+
                 case 'menu':
                 case 'help':
                 case 'ayuda':
@@ -150,6 +232,8 @@ export async function handleMessage(conn, m, options = {}) {
 ――――――――――――――――――――
 
 [ COMANDOS ]
+● bot haz <instrucción>
+> Ejecutar tareas o consultar con la Inteligencia Artificial
 ● ${usedPrefix || prefixList[0]}ping / ${usedPrefix || prefixList[0]}p
 > Ver tiempo de respuesta
 ● ${usedPrefix || prefixList[0]}status
@@ -158,6 +242,8 @@ export async function handleMessage(conn, m, options = {}) {
 > Descargar nota de voz 
 ● ${usedPrefix || prefixList[0]}play2 / ${usedPrefix || prefixList[0]}v
 > Descargar video 
+● ${usedPrefix || prefixList[0]}fixvideo / ${usedPrefix || prefixList[0]}arreglarvideo
+> Reparar o re-codificar un video dañado
 ● ${usedPrefix || prefixList[0]}tag / ${usedPrefix || prefixList[0]}all
 > Mencionar a todos
 ● ${usedPrefix || prefixList[0]}kick / ${usedPrefix || prefixList[0]}ban / ${usedPrefix || prefixList[0]}sacar
@@ -187,16 +273,16 @@ export async function handleMessage(conn, m, options = {}) {
                         await reply(menu)
                     }
                     break
-                    
+
                 case 'status':
                 case 'estado':
                     const uptime = process.uptime()
                     const h = Math.floor(uptime / 3600)
-                    const m = Math.floor((uptime % 3600) / 60)
+                    const m_time = Math.floor((uptime % 3600) / 60)
                     const s = Math.floor(uptime % 60)
                     const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)
                     
-                    await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}\n• Sub Bots Activos: ${subBots.size}`)
+                    await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m_time}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}\n• Sub Bots Activos: ${subBots.size}`)
                     break
                     
                 case 'ping':
@@ -216,9 +302,64 @@ export async function handleMessage(conn, m, options = {}) {
                     await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
                     break
 
-                // ==========================================
-                // GESTIÓN DE PREFIJOS (MAIN Y SUBPREFIX)
-                // ==========================================
+                case 'fixvideo':
+                case 'arreglarvideo':
+                case 'repairvideo': {
+                    let inputPath = ''
+                    let outputPath = ''
+                    try {
+                        const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.[type]?.contextInfo
+                        const quotedMsg = contextInfo?.quotedMessage
+
+                        const isQuotedVideo = quotedMsg && (quotedMsg.videoMessage || quotedMsg.viewOnceMessage?.message?.videoMessage || quotedMsg.viewOnceMessageV2?.message?.videoMessage)
+                        const isVideo = type === 'videoMessage'
+
+                        if (!isVideo && !isQuotedVideo) {
+                            return reply('「✎」 Responde a un video dañado o no ejecutable con el comando */arreglarvideo*')
+                        }
+
+                        await react('🛠️')
+                        reply('《✧》 Procesando y reparando el video, por favor espera...')
+
+                        const targetMsg = isQuotedVideo ? { message: quotedMsg } : msg
+                        const mediaBuffer = await downloadMedia(targetMsg, conn)
+
+                        if (!mediaBuffer || mediaBuffer.length === 0) {
+                            return reply('《✧》 No se pudo extraer el archivo multimedia.')
+                        }
+
+                        const tmpDir = path.join(process.cwd(), 'tmp')
+                        if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
+
+                        inputPath = path.join(tmpDir, `input_${Date.now()}.mp4`)
+                        outputPath = path.join(tmpDir, `fixed_${Date.now()}.mp4`)
+
+                        fs.writeFileSync(inputPath, mediaBuffer)
+
+                        const ffmpegCmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset ultrafast -crf 26 -c:a aac -b:a 128k -pix_fmt yuv420p -movflags +faststart "${outputPath}"`
+
+                        await execPromise(ffmpegCmd)
+
+                        if (fs.existsSync(outputPath)) {
+                            const fixedBuffer = fs.readFileSync(outputPath)
+
+                            await conn.sendMessage(from, {
+                                video: fixedBuffer,
+                                caption: '《✧》 *Video reparado y optimizado correctamente* 🎥'
+                            }, { quoted: msg })
+                        } else {
+                            throw new Error('El archivo procesado no se generó correctamente.')
+                        }
+                    } catch (err) {
+                        console.error('[Error Arreglando Video]:', err)
+                        reply(`[Error al reparar video]: ${err.message}`)
+                    } finally {
+                        if (inputPath && fs.existsSync(inputPath)) fs.unlinkSync(inputPath)
+                        if (outputPath && fs.existsSync(outputPath)) fs.unlinkSync(outputPath)
+                    }
+                    break
+                }
+
                 case 'setprefix':
                 case 'prefix':
                     try {
@@ -256,9 +397,6 @@ export async function handleMessage(conn, m, options = {}) {
                     }
                     break
 
-                // ==========================================
-                // COMANDOS DE SUB BOTS
-                // ==========================================
                 case 'serbot':
                 case 'subbot':
                 case 'code':
@@ -303,9 +441,6 @@ export async function handleMessage(conn, m, options = {}) {
                     }
                     break
 
-                // ==========================================
-                // COMANDO SACAR / KICK
-                // ==========================================
                 case 'kick':
                 case 'ban':
                 case 'sacar':
@@ -338,7 +473,6 @@ export async function handleMessage(conn, m, options = {}) {
                     } catch (e) { reply(`[Error al expulsar]: ${e.message}`) }
                     break
 
-                // COMANDO TAG
                 case 'tag':
                 case 'all':
                 case 'invocar':
@@ -414,7 +548,6 @@ export async function handleMessage(conn, m, options = {}) {
                     } catch (e) { reply(`[Error]: ${e.message}`) }
                     break
 
-                // COMANDO DE AUDIO
                 case 'play':
                 case 'mp3':
                 case 'audio':
@@ -447,7 +580,7 @@ ${video.title}
                         
                         await conn.sendPresenceUpdate('recording', from)
                         
-                        const { filePath, cleanup } = await downloadMedia(video.url, 'vn')
+                        const { filePath, cleanup } = await downloadYtMedia(video.url, 'vn')
                         
                         await conn.sendMessage(from, {
                             audio: fs.readFileSync(filePath),
@@ -464,7 +597,6 @@ ${video.title}
                     }
                     break
 
-                // COMANDO DE VIDEO
                 case 'v':
                 case 'play2':
                 case 'mp4':
@@ -496,7 +628,7 @@ ${video.title}
                         
                         await conn.sendPresenceUpdate('composing', from)
                         
-                        const { filePath, cleanup } = await downloadMedia(video.url, 'mp4')
+                        const { filePath, cleanup } = await downloadYtMedia(video.url, 'mp4')
                         
                         await conn.sendMessage(from, {
                             video: fs.readFileSync(filePath),
@@ -523,9 +655,6 @@ ${video.title}
     } catch (err) { console.error(err) }
 }
 
-// ==========================================
-// FUNCIÓN PRINCIPAL DEL BOT
-// ==========================================
 async function startBot() {
     const authFolder = 'sessions'
     const { state, saveCreds } = await useMultiFileAuthState(authFolder)
@@ -548,7 +677,6 @@ async function startBot() {
     
     conn.ev.on('creds.update', saveCreds)
 
-    // PEDIR NÚMERO EN LA TERMINAL SI NO HAY SESIÓN
     if (!fs.existsSync(`./${authFolder}/creds.json`) && !conn.authState.creds.registered) {
         console.log(chalk.cyan('\n======================================'))
         console.log(chalk.cyan('        CONFIGURACIÓN DE TERMUX'))
@@ -577,19 +705,13 @@ async function startBot() {
         }
     }
 
-    // ESCUCHADOR DE MENSAJES BOT PRINCIPAL
     conn.ev.on('messages.upsert', async (m) => {
         await handleMessage(conn, m)
     })
 
-    // ==========================================
-    // CONTROL DE CONEXIÓN Y CARGA DE SUB BOTS
-    // ==========================================
     conn.ev.on('connection.update', (u) => {
         if (u.connection === 'open') {
             console.log(chalk.cyan('\n   ---------------------------------------\n    BOT INICIADO CORRECTAMENTE EN TERMUX\n   ---------------------------------------'))
-            
-            // Carga todos los Sub Bots guardados enviándoles la función handleMessage
             loadAllSubBots(conn, handleMessage)
         }
         if (u.connection === 'close') {
