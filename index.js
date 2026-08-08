@@ -319,7 +319,6 @@ export async function handleMessage(conn, m, options = {}) {
                         }
 
                         await react('🛠️')
-                        reply('《✧》 Procesando y reparando el video, por favor espera...')
 
                         const targetMsg = isQuotedVideo ? { message: quotedMsg } : msg
                         const mediaBuffer = await downloadMedia(targetMsg, conn)
@@ -336,7 +335,33 @@ export async function handleMessage(conn, m, options = {}) {
 
                         fs.writeFileSync(inputPath, mediaBuffer)
 
-                        const ffmpegCmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset ultrafast -crf 26 -c:a aac -b:a 128k -pix_fmt yuv420p -movflags +faststart "${outputPath}"`
+                        // 1. DETECCIÓN DE AUDIO CON FFPROBE
+                        let hasAudio = false
+                        try {
+                            const { stdout } = await execPromise(`ffprobe -i "${inputPath}" -show_streams -select_streams a -loglevel error`)
+                            if (stdout && stdout.trim().length > 0) {
+                                hasAudio = true
+                            }
+                        } catch (e) {
+                            hasAudio = false
+                        }
+
+                        // 2. MENSAJE EN CHAT
+                        if (hasAudio) {
+                            await reply('《 ⚙️ 》 *SISTEMA:* Video con audio detectado. Corrigiendo dimensiones impares y optimizando...')
+                        } else {
+                            await reply('《 🔇 》 *SISTEMA:* Video/GIF mudo detectado. Corrigiendo dimensiones impares y renderizando...')
+                        }
+
+                        // 3. FILTRO INFALIBLE PARA REDONDEAR A NÚMEROS PARES Y CORREGIR ASPECT RATIO
+                        const videoFilter = '"pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1"'
+
+                        let ffmpegCmd = ''
+                        if (hasAudio) {
+                            ffmpegCmd = `ffmpeg -y -i "${inputPath}" -vf ${videoFilter} -c:v libx264 -preset ultrafast -crf 26 -c:a aac -b:a 128k -pix_fmt yuv420p -movflags +faststart "${outputPath}"`
+                        } else {
+                            ffmpegCmd = `ffmpeg -y -i "${inputPath}" -vf ${videoFilter} -c:v libx264 -preset ultrafast -crf 26 -an -pix_fmt yuv420p -movflags +faststart "${outputPath}"`
+                        }
 
                         await execPromise(ffmpegCmd)
 
@@ -345,7 +370,9 @@ export async function handleMessage(conn, m, options = {}) {
 
                             await conn.sendMessage(from, {
                                 video: fixedBuffer,
-                                caption: '《✧》 *Video reparado y optimizado correctamente* 🎥'
+                                caption: hasAudio 
+                                    ? '《 ⚡ 》 *¡Proceso completado!* Video reparado, dimensiones impares corregidas y audio optimizado. 🎥'
+                                    : '《 ⚡ 》 *¡Proceso completado!* Video reparado y dimensiones impares corregidas (modo mudo). 🎬'
                             }, { quoted: msg })
                         } else {
                             throw new Error('El archivo procesado no se generó correctamente.')
