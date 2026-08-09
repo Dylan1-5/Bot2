@@ -135,9 +135,9 @@ export async function handleMessage(conn, m, options = {}) {
             const lowerText = textWithoutBot.toLowerCase()
 
             // DETECCION DE "bot haz..." / "bot hace..." CON INTELIGENCIA ARTIFICIAL
-            if (lowerText.startsWith('haz ') || lowerText.startsWith('hace ') || lowerText.startsWith('hazlo ') || lowerText.startsWith('que ')) {
+            if (lowerText.startsWith('ia ') || lowerText.startsWith('hace ') || lowerText.startsWith('hazlo ') || lowerText.startsWith('que ')) {
                 isCmd = true
-                command = 'ai_task'
+                command = 'ia'
                 const taskQuery = textWithoutBot.replace(/^(haz|hace|hazlo|que)\s+/i, '').trim()
                 args = taskQuery ? [taskQuery] : []
             } else if (lowerText.includes('tag') || lowerText.includes('etiqueta') || lowerText.includes('menciona') || lowerText.includes('invoca')) {
@@ -195,7 +195,7 @@ export async function handleMessage(conn, m, options = {}) {
                 // ==========================================
                 // TAREA O PREGUNTA ENVIADA A LA IA ("bot haz esto...")
                 // ==========================================
-                case 'ai_task': {
+                case 'ia': {
                     try {
                         const prompt = args.join(' ')
                         if (!prompt) return reply('「✎」 Dime qué quieres que haga. Ejemplo: *bot haz un resumen de la fotosíntesis*')
