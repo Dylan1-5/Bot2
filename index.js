@@ -28,31 +28,49 @@ const decodeJid = (jid) => {
     return jid
 }
 
-// Función para extraer el número telefónico real del emisor eliminando IDs de mensaje
+// Función mejorada para extraer el número real sin confundirlo con el ID del mensaje
 const getSenderNum = (msg, mentionedUser) => {
-    if (mentionedUser) {
-        let clean = String(mentionedUser).split('@')[0].split(':')[0].replace(/\D/g, '')
-        if (clean.length <= 15) return clean
+    try {
+        // 1. Si hay un usuario mencionado explícitamente
+        if (mentionedUser) {
+            let clean = String(mentionedUser).split('@')[0].split(':')[0].replace(/\D/g, '')
+            if (clean.length >= 8 && clean.length <= 15) return clean
+        }
+
+        // 2. Extraer el JID del emisor desde las distintas estructuras posibles de Baileys
+        let rawJid = msg.key?.participant || msg.participant || ''
+        
+        // Si no está en participant (ej. chat privado), usamos remoteJid
+        if (!rawJid || rawJid.includes('@g.us')) {
+            if (msg.key?.remoteJid && !msg.key.remoteJid.endsWith('@g.us')) {
+                rawJid = msg.key.remoteJid
+            } else {
+                rawJid = msg.key?.participant || msg.participant || ''
+            }
+        }
+
+        // 3. Aplicar decodeJid si la función existe
+        if (typeof decodeJid === 'function') {
+            rawJid = decodeJid(rawJid)
+        }
+
+        // 4. Limpiar cualquier caracter no numérico
+        let cleanNum = String(rawJid).split('@')[0].split(':')[0].replace(/\D/g, '')
+
+        // Un número telefónico válido de WhatsApp tiene entre 8 y 15 dígitos.
+        // Si es más largo (ej. IDs de mensaje de 20+ dígitos) o más corto, se descarta.
+        if (cleanNum.length > 15 || cleanNum.length < 8) return ''
+
+        return cleanNum
+    } catch (e) {
+        return ''
     }
-
-    let rawJid = msg.key?.participant || msg.participant || msg.key?.remoteJid || ''
-    
-    if (rawJid.includes('@g.us')) {
-        rawJid = msg.key?.participant || msg.participant || ''
-    }
-
-    let cleanNum = String(rawJid).split('@')[0].split(':')[0].replace(/\D/g, '')
-
-    // Si tiene más de 15 dígitos se considera un ID de mensaje de WhatsApp y se ignora
-    if (cleanNum.length > 15) return ''
-
-    return cleanNum
 }
 
 const extractNumber = (jid) => {
     if (!jid) return ''
     let clean = String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
-    if (clean.length > 15) return ''
+    if (clean.length > 15 || clean.length < 8) return ''
     return clean
 }
 
