@@ -425,17 +425,17 @@ export async function handleMessage(conn, m, options = {}) {
                     break
 
                 case 'serbot':
-                case 'subbot':
-                case 'code':
-                case 'jadibot':
-                    try {
-                        const numInput = args[0] || sender.replace(/\D/g, '')
-                        await startSubBot(conn, from, msg, numInput, handleMessage)
-                    } catch (e) {
-                        reply(`[Error en Sub Bot]: ${e.message}`)
-                    }
-                    break
-
+case 'subbot':
+case 'code':
+case 'jadibot':
+    try {
+        // Detecta: 1. Mención (@user) | 2. Quien ejecuta el comando
+        const target = msg.mentionedJid?.[0] || sender
+        await startSubBot(conn, from, msg, target, handleMessage)
+    } catch (e) {
+        reply(`[Error en Sub Bot]: ${e.message}`)
+    }
+    break
                 case 'stopbot':
                 case 'stopsubbot':
                     try {
