@@ -429,13 +429,18 @@ case 'subbot':
 case 'code':
 case 'jadibot':
     try {
-        // Detecta: 1. Mención (@user) | 2. Quien ejecuta el comando
-        const target = msg.mentionedJid?.[0] || sender
-        await startSubBot(conn, from, msg, target, handleMessage)
+        // 1. Si mencionas a alguien con @tag, usa esa mención.
+        // 2. Si es en un grupo, usa msg.key.participant o msg.participant.
+        // 3. Si es al privado, usa msg.key.remoteJid.
+        // EVITA a toda costa pasarle msg.key.id
+        const userJid = msg.mentionedJid?.[0] || msg.key?.participant || msg.participant || msg.key?.remoteJid || sender
+        
+        await startSubBot(conn, from, msg, userJid, handleMessage)
     } catch (e) {
         reply(`[Error en Sub Bot]: ${e.message}`)
     }
     break
+                    
                 case 'stopbot':
 case 'stopsubbot':
     try {
