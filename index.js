@@ -9,14 +9,14 @@ import { exec } from 'child_process'
 import util from 'util'
 import yts from 'yt-search'
 import readline from 'readline'
-import { GoogleGenAI } from '@google/genai' // Importación de la IA
+import { GoogleGenAI } from '@google/genai'
 import { downloadMedia as downloadYtMedia } from './lib/ytdl.js'
 import { handleKick } from './lib/kick.js'
-import { startSubBot, loadAllSubBots, subBots } from './lib/subbot.js'
+import { startSubBot, loadAllSubBots, subBots, subBotOwners } from './lib/subbot.js'
 
 const execPromise = util.promisify(exec)
 
-// Inicialización de la IA (puedes definir global.geminiKey en config.js o cambiarlo aquí)
+// Inicialización de la IA con GoogleGenAI
 const ai = new GoogleGenAI({ apiKey: global.geminiKey || process.env.GEMINI_API_KEY || '' })
 
 const decodeJid = (jid) => {
@@ -26,6 +26,34 @@ const decodeJid = (jid) => {
         return jid.replace(decode[0], '@')
     }
     return jid
+}
+
+// Función para extraer el número telefónico real del emisor eliminando IDs de mensaje
+const getSenderNum = (msg, mentionedUser) => {
+    if (mentionedUser) {
+        let clean = String(mentionedUser).split('@')[0].split(':')[0].replace(/\D/g, '')
+        if (clean.length <= 15) return clean
+    }
+
+    let rawJid = msg.key?.participant || msg.participant || msg.key?.remoteJid || ''
+    
+    if (rawJid.includes('@g.us')) {
+        rawJid = msg.key?.participant || msg.participant || ''
+    }
+
+    let cleanNum = String(rawJid).split('@')[0].split(':')[0].replace(/\D/g, '')
+
+    // Si tiene más de 15 dígitos se considera un ID de mensaje de WhatsApp y se ignora
+    if (cleanNum.length > 15) return ''
+
+    return cleanNum
+}
+
+const extractNumber = (jid) => {
+    if (!jid) return ''
+    let clean = String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
+    if (clean.length > 15) return ''
+    return clean
 }
 
 const CONFIG = {
@@ -134,7 +162,6 @@ export async function handleMessage(conn, m, options = {}) {
             const textWithoutBot = body.slice(4).trim()
             const lowerText = textWithoutBot.toLowerCase()
 
-            // DETECCION DE "bot haz..." / "bot hace..." CON INTELIGENCIA ARTIFICIAL
             if (lowerText.startsWith('ia ') || lowerText.startsWith('hace ') || lowerText.startsWith('hazlo ') || lowerText.startsWith('que ')) {
                 isCmd = true
                 command = 'ia'
@@ -180,11 +207,11 @@ export async function handleMessage(conn, m, options = {}) {
         }
 
         if (isCmd) {
-            const reply = async (text) => {
+            const reply = async (text, opt = {}, extra = {}) => {
                 await conn.sendPresenceUpdate('composing', from)
                 await delay(500)
                 await conn.sendPresenceUpdate('paused', from)
-                return conn.sendMessage(from, { text }, { quoted: msg })
+                return conn.sendMessage(from, { text, ...extra }, { quoted: msg, ...opt })
             }
 
             const react = async (emoji) => {
@@ -192,9 +219,6 @@ export async function handleMessage(conn, m, options = {}) {
             }
             
             switch (command) {
-                // ==========================================
-                // TAREA O PREGUNTA ENVIADA A LA IA ("bot haz esto...")
-                // ==========================================
                 case 'ia': {
                     try {
                         const prompt = args.join(' ')
@@ -282,7 +306,7 @@ export async function handleMessage(conn, m, options = {}) {
                     const s = Math.floor(uptime % 60)
                     const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)
                     
-                    await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m_time}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}\n• Sub Bots Activos: ${subBots.size}`)
+                    await reply(`ESTADO DEL BOT\n\n• Uptime: ${h}h ${m_time}m ${s}s\n• RAM: ${ram} MB\n• Node.js: ${process.version}\n• Dev: ${global.dev || 'Dy'}\n• Sub Bots Activos: ${subBots ? subBots.size : 0}`)
                     break
                     
                 case 'ping':
@@ -335,7 +359,6 @@ export async function handleMessage(conn, m, options = {}) {
 
                         fs.writeFileSync(inputPath, mediaBuffer)
 
-                        // 1. DETECCIÓN DE AUDIO CON FFPROBE
                         let hasAudio = false
                         try {
                             const { stdout } = await execPromise(`ffprobe -i "${inputPath}" -show_streams -select_streams a -loglevel error`)
@@ -346,14 +369,12 @@ export async function handleMessage(conn, m, options = {}) {
                             hasAudio = false
                         }
 
-                        // 2. MENSAJE EN CHAT
                         if (hasAudio) {
                             await reply('《 ⚙️ 》 *SISTEMA:* Video con audio detectado. Corrigiendo dimensiones impares y optimizando...')
                         } else {
                             await reply('《 🔇 》 *SISTEMA:* Video/GIF mudo detectado. Corrigiendo dimensiones impares y renderizando...')
                         }
 
-                        // 3. FILTRO INFALIBLE PARA REDONDEAR A NÚMEROS PARES Y CORREGIR ASPECT RATIO
                         const videoFilter = '"pad=ceil(iw/2)*2:ceil(ih/2)*2,setsar=1"'
 
                         let ffmpegCmd = ''
@@ -390,8 +411,8 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'setprefix':
                 case 'prefix':
                     try {
-                        const senderNumber = sender.replace(/\D/g, '')
-                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
+                        const senderNumber = getSenderNum(msg)
+                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
                         const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
 
                         if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
@@ -407,8 +428,8 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'subprefix':
                 case 'setsubprefix':
                     try {
-                        const senderNumber = sender.replace(/\D/g, '')
-                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
+                        const senderNumber = getSenderNum(msg)
+                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
                         const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
 
                         if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
@@ -425,90 +446,91 @@ export async function handleMessage(conn, m, options = {}) {
                     break
 
                 case 'serbot':
-case 'subbot':
-case 'code':
-case 'jadibot':
-    try {
-        // 1. Si mencionas a alguien con @tag, usa esa mención.
-        // 2. Si es en un grupo, usa msg.key.participant o msg.participant.
-        // 3. Si es al privado, usa msg.key.remoteJid.
-        // EVITA a toda costa pasarle msg.key.id
-        const userJid = msg.mentionedJid?.[0] || msg.key?.participant || msg.participant || msg.key?.remoteJid || sender
-        
-        await startSubBot(conn, from, msg, userJid, handleMessage)
-    } catch (e) {
-        reply(`[Error en Sub Bot]: ${e.message}`)
-    }
-    break
+                case 'subbot':
+                case 'code':
+                case 'jadibot':
+                    try {
+                        const targetNumber = getSenderNum(msg, msg.mentionedJid?.[0])
+
+                        if (!targetNumber || targetNumber.length < 8) {
+                            return reply('《✧》 No se pudo identificar un número de teléfono válido para la vinculación.')
+                        }
+
+                        await startSubBot(conn, from, msg, targetNumber, handleMessage)
+                    } catch (e) {
+                        reply(`[Error en Sub Bot]: ${e.message}`)
+                    }
+                    break
                     
                 case 'stopbot':
-case 'stopsubbot':
-    try {
-        const senderNum = extractNumber(sender)
+                case 'stopsubbot':
+                    try {
+                        const senderNum = getSenderNum(msg)
 
-        // Buscar si el sender es dueño de algún Sub Bot activo
-        let botSessionKey = null
-        for (const [botNum, ownerNum] of subBotOwners.entries()) {
-            if (ownerNum === senderNum) {
-                botSessionKey = botNum
-                break
-            }
-        }
+                        let botSessionKey = null
+                        if (subBotOwners) {
+                            for (const [botNum, ownerNum] of subBotOwners.entries()) {
+                                if (ownerNum === senderNum) {
+                                    botSessionKey = botNum
+                                    break
+                                }
+                            }
+                        }
 
-        if (botSessionKey && subBots.has(botSessionKey)) {
-            const subConn = subBots.get(botSessionKey)
-            await subConn.logout()
-            subBots.delete(botSessionKey)
-            subBotOwners.delete(botSessionKey)
-            reply('《✧》 Tu Sub Bot se ha desconectado correctamente.')
-        } else {
-            reply('《✧》 Solo el dueño asignado del Sub Bot puede apagar esta sesión.')
-        }
-    } catch (e) {
-        reply(`[Error]: ${e.message}`)
-    }
-    break
+                        if (botSessionKey && subBots && subBots.has(botSessionKey)) {
+                            const subConn = subBots.get(botSessionKey)
+                            await subConn.logout()
+                            subBots.delete(botSessionKey)
+                            if (subBotOwners) subBotOwners.delete(botSessionKey)
+                            reply('《✧》 Tu Sub Bot se ha desconectado correctamente.')
+                        } else {
+                            reply('《✧》 Solo el dueño asignado del Sub Bot puede apagar esta sesión.')
+                        }
+                    } catch (e) {
+                        reply(`[Error]: ${e.message}`)
+                    }
+                    break
                     
-                    case 'passowner':
-                    case 'passbot':
-                    case 'passsubbot':
-                    case 'paybot':
-    try {
-        const senderNum = extractNumber(sender)
-        const targetJid = msg.mentionedJid?.[0]
+                case 'passowner':
+                case 'passbot':
+                case 'passsubbot':
+                case 'paybot':
+                    try {
+                        const senderNum = getSenderNum(msg)
+                        const targetJid = msg.mentionedJid?.[0]
 
-        if (!targetJid) {
-            return reply('《✧》 Menciona al usuario al que le deseas transferir el Sub Bot. Ejemplo: *.passowner @usuario*')
-        }
+                        if (!targetJid) {
+                            return reply('《✧》 Menciona al usuario al que le deseas transferir el Sub Bot. Ejemplo: *.passowner @usuario*')
+                        }
 
-        const newOwnerNum = extractNumber(targetJid)
+                        const newOwnerNum = extractNumber(targetJid)
 
-        // Buscar qué Sub Bot le pertenece al sender actual
-        let botSessionKey = null
-        for (const [botNum, ownerNum] of subBotOwners.entries()) {
-            if (ownerNum === senderNum) {
-                botSessionKey = botNum
-                break
-            }
-        }
+                        let botSessionKey = null
+                        if (subBotOwners) {
+                            for (const [botNum, ownerNum] of subBotOwners.entries()) {
+                                if (ownerNum === senderNum) {
+                                    botSessionKey = botNum
+                                    break
+                                }
+                            }
+                        }
 
-        if (!botSessionKey) {
-            return reply('《✧》 Solo el dueño actual del Sub Bot puede transferir los privilegios (o no posees ningún Sub Bot activo).')
-        }
+                        if (!botSessionKey) {
+                            return reply('《✧》 Solo el dueño actual del Sub Bot puede transferir los privilegios (o no posees ningún Sub Bot activo).')
+                        }
 
-        // Asignar el nuevo dueño
-        subBotOwners.set(botSessionKey, newOwnerNum)
-        reply(`《✧》 Transferencia exitosa. El control del Sub Bot (+${botSessionKey}) ahora pertenece a @${newOwnerNum}`, null, { mentions: [targetJid] })
-    } catch (e) {
-        reply(`[Error al transferir]: ${e.message}`)
-    }
-    break
+                        if (subBotOwners) subBotOwners.set(botSessionKey, newOwnerNum)
+                        reply(`《✧》 Transferencia exitosa. El control del Sub Bot (+${botSessionKey}) ahora pertenece a @${newOwnerNum}`, {}, { mentions: [targetJid] })
+                    } catch (e) {
+                        reply(`[Error al transferir]: ${e.message}`)
+                    }
+                    break
                     
                 case 'bots':
                 case 'subbots':
                 case 'listbots':
                     try {
-                        if (subBots.size === 0) return reply('《✧》 No hay Sub Bots activos en este momento.')
+                        if (!subBots || subBots.size === 0) return reply('《✧》 No hay Sub Bots activos en este momento.')
                         let txt = `《✧》 *LISTA DE SUB BOTS ACTIVOS* (${subBots.size})\n\n`
                         for (const [num] of subBots) {
                             txt += `⭔ +${num}\n`
@@ -528,9 +550,9 @@ case 'stopsubbot':
                         const groupMetadata = await conn.groupMetadata(from)
                         const participants = groupMetadata.participants
                         
-                        const senderNumber = sender.replace(/\D/g, '')
-                        const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
-                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
+                        const senderNumber = getSenderNum(msg)
+                        const botNumber = extractNumber(conn.user?.id || '')
+                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
                         const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
                         const isOwner = senderNumber === botNumber || 
@@ -561,9 +583,9 @@ case 'stopsubbot':
                         const groupMetadata = await conn.groupMetadata(from)
                         const participants = groupMetadata.participants
                         
-                        const senderNumber = sender.replace(/\D/g, '')
-                        const botNumber = String(conn.user?.id || '').replace(/\D/g, '')
-                        const ownerNumberConfig = String(global.owner?.[0]?.[0] || global.owner?.[0] || '').replace(/\D/g, '')
+                        const senderNumber = getSenderNum(msg)
+                        const botNumber = extractNumber(conn.user?.id || '')
+                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
                         const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
                         const isOwner = senderNumber === botNumber || 
@@ -722,7 +744,7 @@ ${video.title}
                         reply(`[Error]: ${e.message}`) 
                     }
                     break
-                    
+
                 default:
                     if (usedPrefix !== undefined && body.startsWith(usedPrefix)) {
                         reply(`El comando *${usedPrefix}${command}* no existe.\nUsa *${usedPrefix}menu* para ver la lista de comandos.`)
@@ -730,7 +752,9 @@ ${video.title}
                     break
             }
         }
-    } catch (err) { console.error(err) }
+    } catch (err) { 
+        console.error(err) 
+    }
 }
 
 async function startBot() {
