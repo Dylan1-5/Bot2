@@ -437,22 +437,68 @@ case 'jadibot':
     }
     break
                 case 'stopbot':
-                case 'stopsubbot':
-                    try {
-                        const senderNum = sender.replace(/\D/g, '')
-                        if (subBots.has(senderNum)) {
-                            const subConn = subBots.get(senderNum)
-                            await subConn.logout()
-                            subBots.delete(senderNum)
-                            reply('《✧》 Tu Sub Bot se ha desconectado correctamente.')
-                        } else {
-                            reply('《✧》 No tienes ningún Sub Bot activo actualmente.')
-                        }
-                    } catch (e) {
-                        reply(`[Error]: ${e.message}`)
-                    }
-                    break
+case 'stopsubbot':
+    try {
+        const senderNum = extractNumber(sender)
 
+        // Buscar si el sender es dueño de algún Sub Bot activo
+        let botSessionKey = null
+        for (const [botNum, ownerNum] of subBotOwners.entries()) {
+            if (ownerNum === senderNum) {
+                botSessionKey = botNum
+                break
+            }
+        }
+
+        if (botSessionKey && subBots.has(botSessionKey)) {
+            const subConn = subBots.get(botSessionKey)
+            await subConn.logout()
+            subBots.delete(botSessionKey)
+            subBotOwners.delete(botSessionKey)
+            reply('《✧》 Tu Sub Bot se ha desconectado correctamente.')
+        } else {
+            reply('《✧》 Solo el dueño asignado del Sub Bot puede apagar esta sesión.')
+        }
+    } catch (e) {
+        reply(`[Error]: ${e.message}`)
+    }
+    break
+                    
+                    case 'passowner':
+                    case 'passbot':
+                    case 'passsubbot':
+                    case 'paybot':
+    try {
+        const senderNum = extractNumber(sender)
+        const targetJid = msg.mentionedJid?.[0]
+
+        if (!targetJid) {
+            return reply('《✧》 Menciona al usuario al que le deseas transferir el Sub Bot. Ejemplo: *.passowner @usuario*')
+        }
+
+        const newOwnerNum = extractNumber(targetJid)
+
+        // Buscar qué Sub Bot le pertenece al sender actual
+        let botSessionKey = null
+        for (const [botNum, ownerNum] of subBotOwners.entries()) {
+            if (ownerNum === senderNum) {
+                botSessionKey = botNum
+                break
+            }
+        }
+
+        if (!botSessionKey) {
+            return reply('《✧》 Solo el dueño actual del Sub Bot puede transferir los privilegios (o no posees ningún Sub Bot activo).')
+        }
+
+        // Asignar el nuevo dueño
+        subBotOwners.set(botSessionKey, newOwnerNum)
+        reply(`《✧》 Transferencia exitosa. El control del Sub Bot (+${botSessionKey}) ahora pertenece a @${newOwnerNum}`, null, { mentions: [targetJid] })
+    } catch (e) {
+        reply(`[Error al transferir]: ${e.message}`)
+    }
+    break
+                    
                 case 'bots':
                 case 'subbots':
                 case 'listbots':
