@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url'
 // ==========================================
 
 global.owner = [
-  ['50662907002'], // Número principal (owner real)
+  ['50662907002'], ['50661410344'], // Número principal (owner real)
   ['225009696014584']  // Número lid
 ]
 
