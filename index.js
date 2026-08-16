@@ -28,51 +28,45 @@ const decodeJid = (jid) => {
     return jid
 }
 
-// Función mejorada para extraer el número real sin confundirlo con el ID del mensaje
-const getSenderNum = (msg, mentionedUser) => {
-    try {
-        // 1. Si hay un usuario mencionado explícitamente
-        if (mentionedUser) {
-            let clean = String(mentionedUser).split('@')[0].split(':')[0].replace(/\D/g, '')
-            if (clean.length >= 8 && clean.length <= 15) return clean
-        }
+// Convierte únicamente JIDs de teléfono (PN), nunca LIDs.
+const normalizePhoneJid = (value) => {
+    if (!value || typeof value !== 'string') return ''
+    if (/@lid(?:$|:)/i.test(value)) return ''
 
-        // 2. Extraer el JID del emisor desde las distintas estructuras posibles de Baileys
-        let rawJid = msg.key?.participant || msg.participant || ''
-        
-        // Si no está en participant (ej. chat privado), usamos remoteJid
-        if (!rawJid || rawJid.includes('@g.us')) {
-            if (msg.key?.remoteJid && !msg.key.remoteJid.endsWith('@g.us')) {
-                rawJid = msg.key.remoteJid
-            } else {
-                rawJid = msg.key?.participant || msg.participant || ''
-            }
-        }
+    const raw = value.includes('@') ? value.split('@')[0] : value
+    const number = raw.replace(/\D/g, '')
+    return /^\d{8,15}$/.test(number) ? number : ''
+}
 
-        // 3. Aplicar decodeJid si la función existe
-        if (typeof decodeJid === 'function') {
-            rawJid = decodeJid(rawJid)
-        }
+const getContextInfo = (msg) => {
+    const type = Object.keys(msg?.message || {})[0]
+    return msg?.message?.extendedTextMessage?.contextInfo
+        || msg?.message?.[type]?.contextInfo
+        || {}
+}
 
-        // 4. Limpiar cualquier caracter no numérico
-        let cleanNum = String(rawJid).split('@')[0].split(':')[0].replace(/\D/g, '')
+const getMentionedJids = (msg) => getContextInfo(msg).mentionedJid || []
 
-        // Un número telefónico válido de WhatsApp tiene entre 8 y 15 dígitos.
-        // Si es más largo (ej. IDs de mensaje de 20+ dígitos) o más corto, se descarta.
-        if (cleanNum.length > 15 || cleanNum.length < 8) return ''
+const getSenderNum = (msg, mentionedUser = '') => {
+    const key = msg?.key || {}
+    const candidates = [
+        mentionedUser,
+        key.senderPn,
+        key.participantPn,
+        key.remoteJidAlt,
+        key.participant,
+        key.remoteJid
+    ]
 
-        return cleanNum
-    } catch (e) {
-        return ''
+    for (const candidate of candidates) {
+        const phone = normalizePhoneJid(candidate)
+        if (phone) return phone
     }
+
+    return ''
 }
 
-const extractNumber = (jid) => {
-    if (!jid) return ''
-    let clean = String(jid).split('@')[0].split(':')[0].replace(/\D/g, '')
-    if (clean.length > 15 || clean.length < 8) return ''
-    return clean
-}
+const extractNumber = (jid) => normalizePhoneJid(jid)
 
 const CONFIG = {
     bannerEnabled: true
@@ -144,8 +138,11 @@ export async function handleMessage(conn, m, options = {}) {
         const msg = m.messages?.[0] || m[0]
         if (!msg || !msg.message) return
 
-        const from = msg.key.remoteJid
+        const from = (msg.key.remoteJid?.endsWith('@lid') && msg.key.remoteJidAlt)
+            ? msg.key.remoteJidAlt
+            : msg.key.remoteJid
         const sender = msg.key.participant || msg.key.remoteJid
+        const senderNumber = getSenderNum(msg)
         const pushName = msg.pushName || 'Usuario'
         const type = Object.keys(msg.message)[0]
         
@@ -180,10 +177,10 @@ export async function handleMessage(conn, m, options = {}) {
             const textWithoutBot = body.slice(4).trim()
             const lowerText = textWithoutBot.toLowerCase()
 
-            if (lowerText.startsWith('ia ') || lowerText.startsWith('hace ') || lowerText.startsWith('hazlo ') || lowerText.startsWith('que ')) {
+            if (/^(ia|haz|hace|hazlo|que)\b/i.test(textWithoutBot)) {
                 isCmd = true
                 command = 'ia'
-                const taskQuery = textWithoutBot.replace(/^(haz|hace|hazlo|que)\s+/i, '').trim()
+                const taskQuery = textWithoutBot.replace(/^(ia|haz|hace|hazlo|que)\s*/i, '').trim()
                 args = taskQuery ? [taskQuery] : []
             } else if (lowerText.includes('tag') || lowerText.includes('etiqueta') || lowerText.includes('menciona') || lowerText.includes('invoca')) {
                 isCmd = true
@@ -350,7 +347,7 @@ export async function handleMessage(conn, m, options = {}) {
                     let inputPath = ''
                     let outputPath = ''
                     try {
-                        const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.[type]?.contextInfo
+                        const contextInfo = getContextInfo(msg)
                         const quotedMsg = contextInfo?.quotedMessage
 
                         const isQuotedVideo = quotedMsg && (quotedMsg.videoMessage || quotedMsg.viewOnceMessage?.message?.videoMessage || quotedMsg.viewOnceMessageV2?.message?.videoMessage)
@@ -468,7 +465,7 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'code':
                 case 'jadibot':
                     try {
-                        const targetNumber = getSenderNum(msg, msg.mentionedJid?.[0])
+                        const targetNumber = normalizePhoneJid(args[0]) || getSenderNum(msg, getMentionedJids(msg)[0])
 
                         if (!targetNumber || targetNumber.length < 8) {
                             return reply('《✧》 No se pudo identificar un número de teléfono válido para la vinculación.')
@@ -515,13 +512,17 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'paybot':
                     try {
                         const senderNum = getSenderNum(msg)
-                        const targetJid = msg.mentionedJid?.[0]
+                        const targetJid = getMentionedJids(msg)[0]
 
                         if (!targetJid) {
                             return reply('《✧》 Menciona al usuario al que le deseas transferir el Sub Bot. Ejemplo: *.passowner @usuario*')
                         }
 
                         const newOwnerNum = extractNumber(targetJid)
+
+                        if (!newOwnerNum) {
+                            return reply('《✧》 No pude obtener el número real del usuario mencionado. Intentá mencionarlo de nuevo.')
+                        }
 
                         let botSessionKey = null
                         if (subBotOwners) {
@@ -572,7 +573,8 @@ export async function handleMessage(conn, m, options = {}) {
                         const botNumber = extractNumber(conn.user?.id || '')
                         const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
-                        const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
+                        const userParticipant = participants.find(p => p.id === sender || p.id === msg.key?.participant)
+                        const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
                         const isOwner = senderNumber === botNumber || 
                                         (ownerNumberConfig && senderNumber === ownerNumberConfig) || 
                                         pushName === global.dev
@@ -581,7 +583,10 @@ export async function handleMessage(conn, m, options = {}) {
                             return reply('「✎」 Este comando es solo para Administradores.')
                         }
 
-                        const isBotAdmin = participants.find(p => p.id === botNumber + '@s.whatsapp.net')?.admin !== null
+                        const botParticipant = participants.find(p =>
+                            p.id === botNumber + '@s.whatsapp.net' || extractNumber(p.id) === botNumber
+                        )
+                        const isBotAdmin = botParticipant?.admin === 'admin' || botParticipant?.admin === 'superadmin'
                         if (!isBotAdmin) {
                             return reply('「✎」 No puedo eliminar a nadie porque el bot no es administrador del grupo.')
                         }
@@ -605,7 +610,8 @@ export async function handleMessage(conn, m, options = {}) {
                         const botNumber = extractNumber(conn.user?.id || '')
                         const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
-                        const isUserAdmin = participants.find(p => p.id === sender)?.admin !== null
+                        const userParticipant = participants.find(p => p.id === sender || p.id === msg.key?.participant)
+                        const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
                         const isOwner = senderNumber === botNumber || 
                                         (ownerNumberConfig && senderNumber === ownerNumberConfig) || 
                                         pushName === global.dev
@@ -617,7 +623,7 @@ export async function handleMessage(conn, m, options = {}) {
                         const targetParticipants = participants.map(p => p.id).filter(Boolean)
                         const invisibleTag = '\u200B'.repeat(100)
 
-                        const contextInfo = msg.message?.extendedTextMessage?.contextInfo || msg.message?.[type]?.contextInfo
+                        const contextInfo = getContextInfo(msg)
                         const quotedMsg = contextInfo?.quotedMessage
 
                         await conn.sendPresenceUpdate('composing', from)
@@ -775,6 +781,20 @@ ${video.title}
     }
 }
 
+let reconnectTimer = null
+
+function scheduleReconnect() {
+    if (reconnectTimer) return
+
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        startBot().catch(error => {
+            console.error('[Error reconectando]:', error)
+            scheduleReconnect()
+        })
+    }, 5000)
+}
+
 async function startBot() {
     const authFolder = 'sessions'
     const { state, saveCreds } = await useMultiFileAuthState(authFolder)
@@ -784,6 +804,9 @@ async function startBot() {
 
     const conn = makeWASocket({
         version,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000,
+        retryRequestDelayMs: 2000,
         logger: P({ level: 'silent' }),
         printQRInTerminal: false, 
         auth: { 
@@ -797,7 +820,7 @@ async function startBot() {
     
     conn.ev.on('creds.update', saveCreds)
 
-    if (!fs.existsSync(`./${authFolder}/creds.json`) && !conn.authState.creds.registered) {
+    if (!state.creds.registered) {
         console.log(chalk.cyan('\n======================================'))
         console.log(chalk.cyan('        CONFIGURACIÓN DE TERMUX'))
         console.log(chalk.cyan('======================================\n'))
@@ -825,8 +848,14 @@ async function startBot() {
         }
     }
 
-    conn.ev.on('messages.upsert', async (m) => {
-        await handleMessage(conn, m)
+    conn.ev.on('messages.upsert', async ({ messages }) => {
+        for (const message of messages || []) {
+            try {
+                await handleMessage(conn, { messages: [message] })
+            } catch (error) {
+                console.error('[Error procesando mensaje]:', error)
+            }
+        }
     })
 
     conn.ev.on('connection.update', (u) => {
@@ -834,18 +863,25 @@ async function startBot() {
             console.log(chalk.cyan('\n   ---------------------------------------\n    BOT INICIADO CORRECTAMENTE EN TERMUX\n   ---------------------------------------'))
             loadAllSubBots(conn, handleMessage)
         }
+
         if (u.connection === 'close') {
-            const reason = new Boom(u.lastDisconnect?.error)?.output.statusCode
-            if (reason !== DisconnectReason.loggedOut) {
-                console.log(chalk.yellow('🔄 Conexión interrumpida. Reconectando...'))
-                startBot()
-            } else {
-                console.log(chalk.red('❌ Sesión cerrada. Eliminando archivos de sesión...'))
-                if (fs.existsSync(authFolder)) fs.rmSync(authFolder, { recursive: true, force: true })
+            const reason = new Boom(u.lastDisconnect?.error)?.output?.statusCode
+
+            if (reason === DisconnectReason.loggedOut) {
+                console.log(chalk.red('❌ Sesión cerrada por WhatsApp. Eliminando archivos de sesión...'))
+                if (fs.existsSync(authFolder)) {
+                    fs.rmSync(authFolder, { recursive: true, force: true })
+                }
                 process.exit(0)
             }
+
+            console.log(chalk.yellow(`🔄 Conexión interrumpida (${reason || 'sin código'}). Reconectando en 5 segundos...`))
+            scheduleReconnect()
         }
     })
 }
 
-startBot().catch(err => console.error('Fallo crítico al arrancar:', err))
+startBot().catch(err => {
+    console.error('Fallo crítico al arrancar:', err)
+    scheduleReconnect()
+})
