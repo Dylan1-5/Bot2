@@ -12,66 +12,83 @@ import readline from 'readline'
 import { GoogleGenAI } from '@google/genai'
 import { downloadMedia as downloadYtMedia } from './lib/ytdl.js'
 import { handleKick } from './lib/kick.js'
-import { startSubBot, loadAllSubBots, subBots, subBotOwners, resolvePhoneFromMessage } from './lib/subbot.js'
+import { startSubBot, loadAllSubBots, subBots, subBotOwners } from './lib/subbot.js'
+import {
+    smsg,
+    extractNumber,
+    normalizePhoneJid,
+    getContextInfo,
+    getMentionedJids,
+    resolvePhoneFromMessage,
+    resolveMentionedPhone
+} from './lib/Numberextractor.js'
 
 const execPromise = util.promisify(exec)
 
 // Inicialización de la IA con GoogleGenAI
 const ai = new GoogleGenAI({ apiKey: global.geminiKey || process.env.GEMINI_API_KEY || '' })
 
-const decodeJid = (jid) => {
-    if (!jid) return jid
-    if (/:\d+@/gi.test(jid)) {
-        let decode = jid.match(/:(\d+)@/gi) || []
-        return jid.replace(decode[0], '@')
-    }
-    return jid
-}
-
-// Convierte únicamente JIDs de teléfono (PN), nunca LIDs.
-const normalizePhoneJid = (value) => {
-    if (!value || typeof value !== 'string') return ''
-    if (/@lid(?:$|:)/i.test(value)) return ''
-
-    const raw = value.includes('@') ? value.split('@')[0] : value
-    const number = raw.replace(/\D/g, '')
-    return /^\d{8,15}$/.test(number) ? number : ''
-}
-
-const getContextInfo = (msg) => {
-    const type = Object.keys(msg?.message || {})[0]
-    return msg?.message?.extendedTextMessage?.contextInfo
-        || msg?.message?.[type]?.contextInfo
-        || {}
-}
-
-const getMentionedJids = (msg) => getContextInfo(msg).mentionedJid || []
-
-const getSenderNum = (msg, mentionedUser = '') => {
-    const key = msg?.key || {}
-    const candidates = [
-        mentionedUser,
-        key.senderPn,
-        key.participantPn,
-        key.participantAlt,
-        key.remoteJidAlt,
-        key.participant,
-        key.remoteJid
-    ]
-
-    for (const candidate of candidates) {
-        const phone = normalizePhoneJid(candidate)
-        if (phone) return phone
-    }
-
-    return ''
-}
-
-const extractNumber = (jid) => normalizePhoneJid(jid)
-
 const CONFIG = {
     bannerEnabled: true
 }
+
+const menuCommands = ({ prefix }) => `
+ɪɴᴛᴇʟɪɢᴇɴᴄɪᴀ
+  └─ *${prefix}ia <pregunta>*
+  └─ *bot haz <instrucción>*
+
+ᴄᴏɴᴛʀᴏʟ
+  └─ *${prefix}ping* · *${prefix}p*
+  └─ *${prefix}status* · *${prefix}estado*
+  └─ *${prefix}menu* · *${prefix}help* · *${prefix}ayuda*
+  └─ *${prefix}owner* · *${prefix}creador* · *${prefix}dueño*
+
+ᴍᴜʟᴛɪᴍᴇᴅɪᴀ
+  └─ *${prefix}play* · *${prefix}mp3* · *${prefix}audio*
+  └─ *${prefix}song* · *${prefix}musica*
+  └─ *${prefix}play2* · *${prefix}v* · *${prefix}mp4* · *${prefix}video*
+  └─ *${prefix}fixvideo* · *${prefix}arreglarvideo* · *${prefix}repairvideo*
+
+ɢʀᴜᴘᴏs
+  └─ *${prefix}tag* · *${prefix}all* · *${prefix}invocar* · *${prefix}totales*
+  └─ *${prefix}kick* · *${prefix}ban* · *${prefix}sacar*
+
+ᴄᴏɴғɪɢᴜʀᴀᴄɪᴏ́ɴ ʏ ᴏᴡɴᴇʀ
+  └─ *${prefix}setprefix* · *${prefix}prefix*
+  └─ *${prefix}subprefix* · *${prefix}setsubprefix*
+  └─ *${prefix}passowner* · *${prefix}passbot*
+  └─ *${prefix}passsubbot* · *${prefix}paybot*
+
+sᴜʙ ʙᴏᴛs
+  └─ *${prefix}code @usuario* · *${prefix}serbot*
+  └─ *${prefix}subbot* · *${prefix}jadibot*
+  └─ *${prefix}bots* · *${prefix}subbots* · *${prefix}listbots*
+  └─ *${prefix}stopbot* · *${prefix}stopsubbot*`
+
+const premium2Menu = ({ name, prefix, dev }) => `╭══════════════════════════════╮
+║         ᴘʀᴇᴍɪᴜᴍ ²              ║
+╰══════════════════════════════╯
+
+        *Bienvenido, ${name}*
+        ──────────────────
+        Prefijo  ›  \`${prefix}\`
+        Dev      ›  \`${dev}\`
+${menuCommands({ prefix })}
+
+        ── · ──
+     _Elegancia en cada comando_
+        ── · ──`
+
+const premiumMenu = ({ name, prefix, dev }) => `╭─────── · ───────╮
+      ᴍᴇɴᴜ ᴘʀᴇᴍɪᴜᴍ
+╰─────── · ───────╯
+
+*Bienvenido, ${name}*
+_Prefijo:_ \`${prefix}\`
+_Dev:_ \`${dev}\`
+${menuCommands({ prefix })}
+
+_Desarrollado por ${dev}_`
 
 // Helper para descargar archivos multimedia
 async function downloadMedia(m, conn) {
@@ -143,7 +160,7 @@ export async function handleMessage(conn, m, options = {}) {
             ? msg.key.remoteJidAlt
             : msg.key.remoteJid
         const sender = msg.key.participant || msg.key.remoteJid
-        const senderNumber = await resolvePhoneFromMessage(conn, msg) || getSenderNum(msg)
+        const senderNumber = await resolvePhoneFromMessage(conn, msg)
         const pushName = msg.pushName || 'Usuario'
         const type = Object.keys(msg.message)[0]
         
@@ -215,7 +232,11 @@ export async function handleMessage(conn, m, options = {}) {
                 isCmd = true
                 command = 'menu'
                 args = []
-            } else if (lowerText.includes('creador') || lowerText.includes('owner') || lowerText.includes('dueño')) {
+            } else if (lowerText.includes('dueño')) {
+                isCmd = true
+                command = 'dueño'
+                args = []
+            } else if (lowerText.includes('creador') || lowerText.includes('owner')) {
                 isCmd = true
                 command = 'owner'
                 args = []
@@ -264,41 +285,11 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'menu':
                 case 'help':
                 case 'ayuda':
-                    const menu = `Hola ${pushName} 
-
-● Prefijo activo: ${usedPrefix || prefixList[0]}
-● Dev: ${global.dev || 'Dy'}
-
-――――――――――――――――――――
-
-[ COMANDOS ]
-● bot haz <instrucción>
-> Ejecutar tareas o consultar con la Inteligencia Artificial
-● ${usedPrefix || prefixList[0]}ping / ${usedPrefix || prefixList[0]}p
-> Ver tiempo de respuesta
-● ${usedPrefix || prefixList[0]}status
-> Ver estado
-● ${usedPrefix || prefixList[0]}play
-> Descargar nota de voz 
-● ${usedPrefix || prefixList[0]}play2 / ${usedPrefix || prefixList[0]}v
-> Descargar video 
-● ${usedPrefix || prefixList[0]}fixvideo / ${usedPrefix || prefixList[0]}arreglarvideo
-> Reparar o re-codificar un video dañado
-● ${usedPrefix || prefixList[0]}tag / ${usedPrefix || prefixList[0]}all
-> Mencionar a todos
-● ${usedPrefix || prefixList[0]}kick / ${usedPrefix || prefixList[0]}ban / ${usedPrefix || prefixList[0]}sacar
-> Eliminar usuario (o 'bot saca a...')
-● ${usedPrefix || prefixList[0]}setprefix <prefijo>
-> Cambiar el prefijo del Bot Principal
-● ${usedPrefix || prefixList[0]}subprefix <prefijo>
-> Cambiar el prefijo global de Sub Bots
-● ${usedPrefix || prefixList[0]}serbot / ${usedPrefix || prefixList[0]}jadibot
-> Conectar tu número como Sub Bot
-● ${usedPrefix || prefixList[0]}stopbot
-> Desconectar tu Sub Bot
-● ${usedPrefix || prefixList[0]}subbots / ${usedPrefix || prefixList[0]}listbots
-> Ver lista de Sub Bots activos
-――――――――――――――――――――`
+                    const menu = (options.isSubBot ? premiumMenu : premium2Menu)({
+                        name: pushName,
+                        prefix: usedPrefix || prefixList[0],
+                        dev: global.dev || 'Dy'
+                    })
                     
                     await conn.sendPresenceUpdate('composing', from)
                     await delay(500)
@@ -335,12 +326,32 @@ export async function handleMessage(conn, m, options = {}) {
                     break
                     
                 case 'owner':
-                case 'creador':
-                case 'dueño':
-                    const ownerNumber = global.owner?.[0]?.[0] || global.owner?.[0] || 'Sin número'
-                    const ownerName = global.dev || 'Dy'
-                    await reply(`INFORMACIÓN OWNER\n\nNombre: ${ownerName}\nContacto: ${ownerNumber}\n\n――――――――――――――――――――`)
+                case 'creador': {
+                    const owners = getConfiguredOwners()
+
+                    if (owners.length === 0) {
+                        return await reply('INFORMACIÓN OWNER\n\nNo hay ningún Owner configurado en config.js.')
+                    }
+
+                    const title = owners.length === 1 ? 'OWNER ACTUAL' : 'OWNERS ACTUALES'
+                    const list = owners.map((number, index) => `${index + 1}. +${number}`).join('\n')
+
+                    await reply(`${title}\n\n${list}\n\nNombre del bot: ${global.dev || 'Dy'}\n\n――――――――――――――――――――`)
                     break
+                }
+
+                case 'dueño': {
+                    if (!subBotOwners || subBotOwners.size === 0) {
+                        return await reply('DUEÑOS DE SUB BOTS\n\nNo hay Sub Bots con dueño asignado.')
+                    }
+
+                    const list = [...subBotOwners.entries()]
+                        .map(([botNumber, ownerNumber], index) => `${index + 1}. Sub Bot: +${extractNumber(botNumber) || botNumber}\n   Dueño: +${extractNumber(ownerNumber) || ownerNumber}`)
+                        .join('\n')
+
+                    await reply(`DUEÑOS DE SUB BOTS\n\n${list}\n\n――――――――――――――――――――`)
+                    break
+                }
 
                 case 'fixvideo':
                 case 'arreglarvideo':
@@ -427,11 +438,11 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'setprefix':
                 case 'prefix':
                     try {
-                        const senderNumber = getSenderNum(msg)
-                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
-                        const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
+                        const currentSenderNumber = senderNumber
+                        const configuredOwners = getConfiguredOwners()
+                        const isOwner = configuredOwners.includes(currentSenderNumber)
 
-                        if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
+                        if (!isOwner) return reply('「✎」 Este comando solo lo puede usar un Owner configurado en global.owner.')
                         if (!args[0]) return reply(`「✎」 Ingresa el nuevo prefijo del Bot Principal. Ejemplo: *${usedPrefix || '/'}setprefix !*`)
 
                         global.prefix = [args[0]]
@@ -444,9 +455,9 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'subprefix':
                 case 'setsubprefix':
                     try {
-                        const senderNumber = getSenderNum(msg)
+                        const currentSenderNumber = senderNumber
                         const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
-                        const isOwner = senderNumber === ownerNumberConfig || pushName === global.dev
+                        const isOwner = currentSenderNumber === ownerNumberConfig || pushName === global.dev
 
                         if (!isOwner) return reply('「✎」 Este comando solo lo puede usar el Owner del bot.')
                         if (!args[0]) return reply(`「✎」 Ingresa el nuevo prefijo para los Sub Bots. Ejemplo: *${usedPrefix || '/'}subprefix #*`)
@@ -466,13 +477,13 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'code':
                 case 'jadibot':
                     try {
-                        const targetNumber = normalizePhoneJid(args[0]) || senderNumber
+                        const targetNumber = normalizePhoneJid(args[0]) || await resolveMentionedPhone(conn, msg, getMentionedJids(msg)[0]) || senderNumber
 
                         if (!targetNumber || targetNumber.length < 8) {
                             return reply('《✧》 No se pudo identificar un número de teléfono válido para la vinculación.')
                         }
 
-                        await startSubBot(conn, from, msg, targetNumber, handleMessage)
+                        await startSubBot(conn, from, msg, targetNumber, handleMessage, senderNumber)
                     } catch (e) {
                         reply(`[Error en Sub Bot]: ${e.message}`)
                     }
@@ -481,7 +492,7 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'stopbot':
                 case 'stopsubbot':
                     try {
-                        const senderNum = getSenderNum(msg)
+                        const senderNum = senderNumber
 
                         let botSessionKey = null
                         if (subBotOwners) {
@@ -512,14 +523,14 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'passsubbot':
                 case 'paybot':
                     try {
-                        const senderNum = getSenderNum(msg)
+                        const senderNum = senderNumber
                         const targetJid = getMentionedJids(msg)[0]
 
                         if (!targetJid) {
                             return reply('《✧》 Menciona al usuario al que le deseas transferir el Sub Bot. Ejemplo: *.passowner @usuario*')
                         }
 
-                        const newOwnerNum = extractNumber(targetJid)
+                        const newOwnerNum = await resolveMentionedPhone(conn, msg, targetJid)
 
                         if (!newOwnerNum) {
                             return reply('《✧》 No pude obtener el número real del usuario mencionado. Intentá mencionarlo de nuevo.')
@@ -570,14 +581,14 @@ export async function handleMessage(conn, m, options = {}) {
                         const groupMetadata = await conn.groupMetadata(from)
                         const participants = groupMetadata.participants
                         
-                        const senderNumber = getSenderNum(msg)
+                        const currentSenderNumber = senderNumber
                         const botNumber = extractNumber(conn.user?.id || '')
                         const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
                         const userParticipant = participants.find(p => p.id === sender || p.id === msg.key?.participant)
                         const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
-                        const isOwner = senderNumber === botNumber || 
-                                        (ownerNumberConfig && senderNumber === ownerNumberConfig) || 
+                        const isOwner = currentSenderNumber === botNumber || 
+                                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) || 
                                         pushName === global.dev
 
                         if (!isUserAdmin && !isOwner) {
@@ -607,14 +618,14 @@ export async function handleMessage(conn, m, options = {}) {
                         const groupMetadata = await conn.groupMetadata(from)
                         const participants = groupMetadata.participants
                         
-                        const senderNumber = getSenderNum(msg)
+                        const currentSenderNumber = senderNumber
                         const botNumber = extractNumber(conn.user?.id || '')
                         const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
                         const userParticipant = participants.find(p => p.id === sender || p.id === msg.key?.participant)
                         const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
-                        const isOwner = senderNumber === botNumber || 
-                                        (ownerNumberConfig && senderNumber === ownerNumberConfig) || 
+                        const isOwner = currentSenderNumber === botNumber || 
+                                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) || 
                                         pushName === global.dev
 
                         if (!isUserAdmin && !isOwner) {
@@ -852,7 +863,8 @@ async function startBot() {
     conn.ev.on('messages.upsert', async ({ messages }) => {
         for (const message of messages || []) {
             try {
-                await handleMessage(conn, { messages: [message] })
+                const serialized = await smsg(conn, message)
+                await handleMessage(conn, { messages: [serialized] })
             } catch (error) {
                 console.error('[Error procesando mensaje]:', error)
             }
