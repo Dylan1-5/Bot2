@@ -69,6 +69,28 @@ const getSenderNum = (msg, mentionedUser = '') => {
 
 const extractNumber = (jid) => normalizePhoneJid(jid)
 
+// Último recurso automático para grupos donde WhatsApp entrega solo un LID.
+// Baileys solo puede resolverlo si ya tiene guardado el vínculo LID <-> PN.
+const resolveSenderNumber = async (conn, msg) => {
+    const directNumber = getSenderNum(msg)
+    if (directNumber) return directNumber
+
+    const key = msg?.key || {}
+    const lid = [key.participant, key.remoteJid]
+        .find(value => typeof value === 'string' && /@lid(?:$|:)/i.test(value))
+
+    const mapping = conn?.signalRepository?.lidMapping
+    if (lid && mapping?.getPNForLID) {
+        try {
+            return normalizePhoneJid(await mapping.getPNForLID(lid))
+        } catch (error) {
+            console.error('[LID] No se pudo resolver automáticamente:', error.message)
+        }
+    }
+
+    return ''
+}
+
 const CONFIG = {
     bannerEnabled: true
 }
@@ -466,7 +488,7 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'code':
                 case 'jadibot':
                     try {
-                        const targetNumber = normalizePhoneJid(args[0]) || getSenderNum(msg, getMentionedJids(msg)[0])
+                        const targetNumber = normalizePhoneJid(args[0]) || await resolveSenderNumber(conn, msg) || getSenderNum(msg, getMentionedJids(msg)[0])
 
                         if (!targetNumber || targetNumber.length < 8) {
                             return reply('《✧》 No se pudo identificar un número de teléfono válido para la vinculación.')
