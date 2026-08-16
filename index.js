@@ -53,6 +53,7 @@ const getSenderNum = (msg, mentionedUser = '') => {
         mentionedUser,
         key.senderPn,
         key.participantPn,
+        key.participantAlt,
         key.remoteJidAlt,
         key.participant,
         key.remoteJid
