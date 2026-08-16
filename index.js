@@ -20,7 +20,8 @@ import {
     getContextInfo,
     getMentionedJids,
     resolvePhoneFromMessage,
-    resolveMentionedPhone
+    resolveMentionedPhone,
+    resolveJidAsync
 } from './lib/Numberextractor.js'
 
 const execPromise = util.promisify(exec)
@@ -149,6 +150,39 @@ const question = (text) => {
             resolve(answer)
         })
     })
+}
+
+const findGroupParticipant = async (conn, participants, groupJid, jidCandidates = [], numberCandidates = []) => {
+    const jids = jidCandidates.filter(Boolean).map(String)
+    const numbers = numberCandidates.map(extractNumber).filter(Boolean)
+
+    const matches = (participant) => {
+        const ids = [
+            participant?.id,
+            participant?.jid,
+            participant?.lid,
+            participant?.participant,
+            participant?.phoneNumber,
+            participant?.pn
+        ].filter(Boolean).map(String)
+
+        return ids.some(id => jids.includes(id) || numbers.includes(extractNumber(id)))
+    }
+
+    const direct = participants.find(matches)
+    if (direct) return direct
+
+    // Si el grupo entrega participantes como LID, resolvemos esos IDs antes
+    // de decidir si el usuario es administrador.
+    for (const participant of participants) {
+        const ids = [participant?.id, participant?.jid, participant?.lid, participant?.participant].filter(Boolean)
+        for (const id of ids) {
+            const resolved = await resolveJidAsync(id, conn, groupJid)
+            if (jids.includes(resolved) || numbers.includes(extractNumber(resolved))) return participant
+        }
+    }
+
+    return undefined
 }
 
 export async function handleMessage(conn, m, options = {}) {
@@ -477,7 +511,11 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'code':
                 case 'jadibot':
                     try {
-                        const targetNumber = normalizePhoneJid(args[0]) || await resolveMentionedPhone(conn, msg, getMentionedJids(msg)[0]) || senderNumber
+                        const mentionedJid = getMentionedJids(msg)[0]
+                        const hasExplicitMention = Boolean(mentionedJid || String(args[0] || '').startsWith('@'))
+                        const targetNumber = normalizePhoneJid(args[0])
+                            || await resolveMentionedPhone(conn, msg, mentionedJid)
+                            || (!hasExplicitMention ? senderNumber : '')
 
                         if (!targetNumber || targetNumber.length < 8) {
                             return reply('《✧》 No se pudo identificar un número de teléfono válido para la vinculación.')
@@ -583,20 +621,36 @@ export async function handleMessage(conn, m, options = {}) {
                         
                         const currentSenderNumber = senderNumber
                         const botNumber = extractNumber(conn.user?.id || '')
-                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
+                        const configuredOwners = getConfiguredOwners()
 
-                        const userParticipant = participants.find(p => p.id === sender || p.id === msg.key?.participant)
+                        const senderJids = [
+                            sender,
+                            msg.key?.participant,
+                            msg.key?.participantAlt,
+                            msg.key?.participantPn,
+                            msg.key?.remoteJidAlt
+                        ]
+                        const userParticipant = await findGroupParticipant(
+                            conn,
+                            participants,
+                            from,
+                            senderJids,
+                            [currentSenderNumber]
+                        )
                         const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
-                        const isOwner = currentSenderNumber === botNumber || 
-                                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) || 
-                                        pushName === global.dev
+                        const isOwner = currentSenderNumber === botNumber || configuredOwners.includes(currentSenderNumber)
 
                         if (!isUserAdmin && !isOwner) {
                             return reply('「✎」 Este comando es solo para Administradores.')
                         }
 
-                        const botParticipant = participants.find(p =>
-                            p.id === botNumber + '@s.whatsapp.net' || extractNumber(p.id) === botNumber
+                        const botJid = await resolveJidAsync(conn.user?.id || '', conn, from)
+                        const botParticipant = await findGroupParticipant(
+                            conn,
+                            participants,
+                            from,
+                            [conn.user?.id, conn.user?.lid, botJid],
+                            [botNumber, extractNumber(botJid)]
                         )
                         const isBotAdmin = botParticipant?.admin === 'admin' || botParticipant?.admin === 'superadmin'
                         if (!isBotAdmin) {
@@ -622,7 +676,20 @@ export async function handleMessage(conn, m, options = {}) {
                         const botNumber = extractNumber(conn.user?.id || '')
                         const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
-                        const userParticipant = participants.find(p => p.id === sender || p.id === msg.key?.participant)
+                        const senderJids = [
+                            sender,
+                            msg.key?.participant,
+                            msg.key?.participantAlt,
+                            msg.key?.participantPn,
+                            msg.key?.remoteJidAlt
+                        ]
+                        const userParticipant = await findGroupParticipant(
+                            conn,
+                            participants,
+                            from,
+                            senderJids,
+                            [currentSenderNumber]
+                        )
                         const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
                         const isOwner = currentSenderNumber === botNumber || 
                                         (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) || 
