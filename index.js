@@ -33,6 +33,15 @@ const CONFIG = {
     bannerEnabled: true
 }
 
+const getConfiguredOwners = () => {
+    const configured = Array.isArray(global.owner) ? global.owner : []
+
+    return configured
+        .map(owner => Array.isArray(owner) ? owner[0] : owner)
+        .map(owner => extractNumber(String(owner || '')))
+        .filter(Boolean)
+}
+
 const menuCommands = ({ prefix }) => `
 ɪɴᴛᴇʟɪɢᴇɴᴄɪᴀ
   └─ *${prefix}ia <pregunta>*
