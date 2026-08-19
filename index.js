@@ -786,20 +786,79 @@ case 'audio':
 case 'song':
 case 'musica':
     try {
-        if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
+        // 🛡️ ANTI-SPAM
+        const now = Date.now()
+        const cooldownTime = 10000
+        const spamKey = `${from}:${sender || pushname || 'user'}`
+
+        if (!global.playCooldown) {
+            global.playCooldown = new Map()
+        }
+
+        const lastUse = global.playCooldown.get(spamKey) || 0
+        const remaining = cooldownTime - (now - lastUse)
+
+        if (remaining > 0) {
+            const seconds = Math.ceil(remaining / 1000)
+
+            return reply(
+                `⏳ Espera ${seconds}s antes de volver a usar *play*.`
+            )
+        }
+
+        global.playCooldown.set(spamKey, now)
+
+        // 🧹 Limpieza automática del cooldown
+        setTimeout(() => {
+            global.playCooldown.delete(spamKey)
+        }, cooldownTime)
+
+        if (!args[0]) {
+            return reply('Ingresa un nombre o URL de YouTube')
+        }
 
         await react('🎵')
 
         const input_text = args.join(' ').trim()
 
-        let search = await yts({
+        const search = await yts({
             query: input_text
         }).catch(() => null)
 
-        let video = search?.videos?.[0]
+        const videos = (search?.videos || []).slice(0, 3)
 
-        if (!video) {
+        if (!videos.length) {
             return reply('No se encontraron resultados.')
+        }
+
+        await conn.sendPresenceUpdate(
+            'recording',
+            from
+        )
+
+        let media = null
+        let video = null
+        let lastError = null
+
+        for (const result of videos) {
+            try {
+                media = await downloadYtMedia(
+                    result.url,
+                    'vn'
+                )
+
+                video = result
+                break
+
+            } catch (error) {
+                lastError = error
+            }
+        }
+
+        if (!media || !video) {
+            throw lastError || new Error(
+                'No se pudo descargar ningún resultado.'
+            )
         }
 
         if (CONFIG.bannerEnabled) {
@@ -832,20 +891,17 @@ ${video.title}
                     quoted: msg
                 }
             )
-        }
 
-        await conn.sendPresenceUpdate(
-            'recording',
-            from
-        )
+            await conn.sendPresenceUpdate(
+                'recording',
+                from
+            )
+        }
 
         const {
             filePath,
             cleanup
-        } = await downloadYtMedia(
-            video.url,
-            'vn'
-        )
+        } = media
 
         await conn.sendMessage(
             from,
@@ -872,19 +928,6 @@ ${video.title}
             'paused',
             from
         )
-
-        const error =
-            e?.message || ''
-
-        if (
-            error.includes(
-                'verificación de edad'
-            )
-        ) {
-            return reply(
-                '❌ Este video requiere verificación de edad.'
-            )
-        }
 
         return reply(
             '❌ No se pudo descargar el audio.'
