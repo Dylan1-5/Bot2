@@ -781,22 +781,30 @@ export async function handleMessage(conn, m, options = {}) {
                     break
 
                 case 'play':
-                case 'mp3':
-                case 'audio':
-                case 'song':
-                case 'musica':
-                    try {
-                        if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
-                        
-                        await react('🎵')
-                        const input_text = args.join(' ').trim()
+case 'mp3':
+case 'audio':
+case 'song':
+case 'musica':
+    try {
+        if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
 
-                        let search = await yts({ query: input_text }).catch(() => null)
-                        let video = search?.videos?.[0]
-                        if (!video) return reply('No se encontraron resultados.')
+        await react('🎵')
 
-                        if (CONFIG.bannerEnabled) {
-                            const captionInfo = `➩ *Descargando Nota de Voz:*
+        const input_text = args.join(' ').trim()
+
+        let search = await yts({
+            query: input_text
+        }).catch(() => null)
+
+        let video = search?.videos?.[0]
+
+        if (!video) {
+            return reply('No se encontraron resultados.')
+        }
+
+        if (CONFIG.bannerEnabled) {
+
+            const captionInfo = `➩ *Descargando Nota de Voz:*
 ${video.title}
 
 │ ❖ *Canal:* ${video.author.name}
@@ -805,30 +813,85 @@ ${video.title}
 │ ☆ *Publicado:* ${video.ago}
 │ 🔗 *Enlace:* ${video.url}`
 
-                            await conn.sendPresenceUpdate('composing', from)
-                            await delay(500)
-                            await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
-                        }
-                        
-                        await conn.sendPresenceUpdate('recording', from)
-                        
-                        const { filePath, cleanup } = await downloadYtMedia(video.url, 'vn')
-                        
-                        await conn.sendMessage(from, {
-                            audio: fs.readFileSync(filePath),
-                            mimetype: 'audio/ogg; codecs=opus',
-                            ptt: true
-                        }, { quoted: msg })
-                        
-                        cleanup()
-                        await conn.sendPresenceUpdate('paused', from)
+            await conn.sendPresenceUpdate(
+                'composing',
+                from
+            )
 
-                    } catch (e) { 
-                        await conn.sendPresenceUpdate('paused', from)
-                        reply(`[Error]: ${e.message}`) 
-                    }
-                    break
+            await delay(500)
 
+            await conn.sendMessage(
+                from,
+                {
+                    image: {
+                        url: video.image
+                    },
+                    caption: captionInfo
+                },
+                {
+                    quoted: msg
+                }
+            )
+        }
+
+        await conn.sendPresenceUpdate(
+            'recording',
+            from
+        )
+
+        const {
+            filePath,
+            cleanup
+        } = await downloadYtMedia(
+            video.url,
+            'vn'
+        )
+
+        await conn.sendMessage(
+            from,
+            {
+                audio: fs.readFileSync(filePath),
+                mimetype: 'audio/ogg; codecs=opus',
+                ptt: true
+            },
+            {
+                quoted: msg
+            }
+        )
+
+        cleanup()
+
+        await conn.sendPresenceUpdate(
+            'paused',
+            from
+        )
+
+    } catch (e) {
+
+        await conn.sendPresenceUpdate(
+            'paused',
+            from
+        )
+
+        const error =
+            e?.message || ''
+
+        if (
+            error.includes(
+                'verificación de edad'
+            )
+        ) {
+            return reply(
+                '❌ Este video requiere verificación de edad.'
+            )
+        }
+
+        return reply(
+            '❌ No se pudo descargar el audio.'
+        )
+    }
+
+    break
                 case 'v':
                 case 'play2':
                 case 'mp4':
