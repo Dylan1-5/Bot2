@@ -148,6 +148,36 @@ async function downloadMedia(m, conn) {
     }
 }
 
+
+// Busca y prueba varios resultados para no quedarse con un video restringido o roto.
+async function searchAndDownloadAudio(query) {
+    const queries = [query]
+    if (!/\bletra\b/i.test(query)) queries.push(`${query} letra`)
+
+    const attempted = new Set()
+    let lastError = null
+
+    for (const searchQuery of queries) {
+        const search = await yts({ query: searchQuery }).catch(() => null)
+        const videos = (search?.videos || []).slice(0, 10)
+
+        for (const video of videos) {
+            if (!video?.url || attempted.has(video.url)) continue
+            attempted.add(video.url)
+
+            try {
+                const media = await downloadYtMedia(video.url, 'vn')
+                return { video, ...media, searchQuery }
+            } catch (error) {
+                lastError = error
+                console.warn(`[YouTube] Se omite "${video.title}": ${error.message}`)
+            }
+        }
+    }
+
+    throw lastError || new Error('No se pudo descargar ningún resultado de YouTube.')
+}
+
 const question = (text) => {
     const rl = readline.createInterface({
         input: process.stdin,
@@ -671,97 +701,95 @@ export async function handleMessage(conn, m, options = {}) {
                     } catch (e) { reply(`[Error al expulsar]: ${e.message}`) }
                     break
 
-                    case 'tag': 
-                    case 'all':
-                    case 'invocar':
-                    case 'totales':
-    try {
-        if (!from.endsWith('@g.us')) return reply('「✎」 Este comando solo funciona en grupos.')
+                case 'tag':
+                case 'all':
+                case 'invocar':
+                case 'totales': 
+                    try {
+                        if (!from.endsWith('@g.us')) return reply('「✎」 Este comando solo funciona en grupos.')
 
-        const groupMetadata = await conn.groupMetadata(from)
-        const participants = groupMetadata.participants
+                        const groupMetadata = await conn.groupMetadata(from)
+                        const participants = groupMetadata.participants
+                        
+                        const currentSenderNumber = senderNumber
+                        const botNumber = extractNumber(conn.user?.id || '')
+                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
-        const currentSenderNumber = senderNumber
-        const botNumber = extractNumber(conn.user?.id || '')
-        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
+                        const senderJids = [
+                            sender,
+                            msg.key?.participant,
+                            msg.key?.participantAlt,
+                            msg.key?.participantPn,
+                            msg.key?.remoteJidAlt
+                        ]
+                        const userParticipant = await findGroupParticipant(
+                            conn,
+                            participants,
+                            from,
+                            senderJids,
+                            [currentSenderNumber]
+                        )
+                        const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
+                        const isOwner = currentSenderNumber === botNumber || 
+                                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) || 
+                                        pushName === global.dev
 
-        const senderJids = [
-            sender,
-            msg.key?.participant,
-            msg.key?.participantAlt,
-            msg.key?.participantPn,
-            msg.key?.remoteJidAlt
-        ]
-        const userParticipant = await findGroupParticipant(
-            conn,
-            participants,
-            from,
-            senderJids,
-            [currentSenderNumber]
-        )
-        const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
-        const isOwner = currentSenderNumber === botNumber ||
-                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) ||
-                        pushName === global.dev
+                        if (!isUserAdmin && !isOwner) {
+                            return reply('「✎」 Este comando es solo para Administradores.')
+                        }
 
-        if (!isUserAdmin && !isOwner) {
-            return reply('「✎」 Este comando es solo para Administradores.')
-        }
+                        const targetParticipants = participants.map(p => p.id).filter(Boolean)
+                        const invisibleTag = '\u200B'.repeat(100)
 
-        const targetParticipants = participants.map(p => p.id).filter(Boolean)
-        const invisibleTag = '\u200B'.repeat(100)
+                        const contextInfo = getContextInfo(msg)
+                        const quotedMsg = contextInfo?.quotedMessage
 
-        const contextInfo = getContextInfo(msg)
-        const quotedMsg = contextInfo?.quotedMessage
+                        await conn.sendPresenceUpdate('composing', from)
 
-        await conn.sendPresenceUpdate('composing', from)
+                        if (quotedMsg) {
+                            const quotedType = Object.keys(quotedMsg)[0]
+                            const quotedContent = quotedMsg[quotedType]
+                            let customText = args.join(' ').trim()
 
-        if (quotedMsg) {
-            const quotedType = Object.keys(quotedMsg)[0]
-            const quotedContent = quotedMsg[quotedType]
-            let customText = args.join(' ').trim()
+                            if (quotedType === 'conversation' || quotedType === 'extendedTextMessage') {
+                                let textToFormat = customText || quotedContent.text || quotedContent || ''
+                                return await conn.sendMessage(from, {
+                                    text: `${textToFormat} ${invisibleTag}`,
+                                    mentions: targetParticipants
+                                }, { quoted: msg })
+                            }
 
-            if (quotedType === 'conversation' || quotedType === 'extendedTextMessage') {
-                let textToFormat = customText || quotedContent.text || quotedContent || ''
-                return await conn.sendMessage(from, {
-                    text: `${textToFormat} ${invisibleTag}`,
-                    mentions: targetParticipants
-                })
-            }
+                            const quotedKey = {
+                                remoteJid: from,
+                                fromMe: contextInfo.participant === conn.user?.id,
+                                id: contextInfo.stanzaId,
+                                participant: contextInfo.participant
+                            }
 
-            const quotedKey = {
-                remoteJid: from,
-                fromMe: contextInfo.participant === conn.user?.id,
-                id: contextInfo.stanzaId,
-                participant: contextInfo.participant
-            }
+                            return await conn.sendMessage(from, {
+                                forward: {
+                                    key: quotedKey,
+                                    message: quotedMsg
+                                },
+                                contextInfo: {
+                                    mentionedJid: targetParticipants
+                                }
+                            })
+                        }
 
-            return await conn.sendMessage(from, {
-                forward: {
-                    key: quotedKey,
-                    message: quotedMsg
-                },
-                contextInfo: {
-                    mentionedJid: targetParticipants
-                }
-            })
-        }
+                        let textMessage = args.join(' ').trim()
+                        if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
 
-        let textMessage = args.join(' ').trim()
-        if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
+                        let fullTextMessage = `${textMessage} ${invisibleTag}`
 
-        let fullTextMessage = `${textMessage} ${invisibleTag}`
+                        await conn.sendMessage(from, { 
+                            text: fullTextMessage, 
+                            mentions: targetParticipants 
+                        }, { quoted: msg })
 
-        await conn.sendMessage(from, {
-            text: fullTextMessage,
-            mentions: targetParticipants
-        }, { quoted: msg })
+                    } catch (e) { reply(`[Error]: ${e.message}`) }
+                    break
 
-    } catch (e) {
-        reply(`[Error]: ${e.message}`)
-    }
-    break
-                    
                 case 'play':
                 case 'mp3':
                 case 'audio':
@@ -769,45 +797,44 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'musica':
                     try {
                         if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
-                        
+
                         await react('🎵')
                         const input_text = args.join(' ').trim()
+                        await conn.sendPresenceUpdate('recording', from)
 
-                        let search = await yts({ query: input_text }).catch(() => null)
-                        let video = search?.videos?.[0]
-                        if (!video) return reply('No se encontraron resultados.')
+                        // Prueba hasta 10 resultados y luego repite la búsqueda con "letra".
+                        // Así se saltan videos con restricción de edad o con errores de descarga.
+                        const { video, filePath, cleanup } = await searchAndDownloadAudio(input_text)
 
-                        if (CONFIG.bannerEnabled) {
-                            const captionInfo = `➩ *Descargando Nota de Voz:*
+                        try {
+                            if (CONFIG.bannerEnabled) {
+                                const captionInfo = `➩ *Descargando Nota de Voz:*
 ${video.title}
 
 │ ❖ *Canal:* ${video.author.name}
 │ ⏳ *Duración:* ${video.timestamp}
-│ ❀ *Vistas:* ${video.views.toLocaleString()}
+│ ❀ *Vistas:* ${Number(video.views || 0).toLocaleString()}
 │ ☆ *Publicado:* ${video.ago}
 │ 🔗 *Enlace:* ${video.url}`
 
-                            await conn.sendPresenceUpdate('composing', from)
-                            await delay(500)
-                            await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
-                        }
-                        
-                        await conn.sendPresenceUpdate('recording', from)
-                        
-                        const { filePath, cleanup } = await downloadYtMedia(video.url, 'vn')
-                        
-                        await conn.sendMessage(from, {
-                            audio: fs.readFileSync(filePath),
-                            mimetype: 'audio/ogg; codecs=opus',
-                            ptt: true
-                        }, { quoted: msg })
-                        
-                        cleanup()
-                        await conn.sendPresenceUpdate('paused', from)
+                                await conn.sendPresenceUpdate('composing', from)
+                                await delay(500)
+                                await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
+                            }
 
-                    } catch (e) { 
+                            await conn.sendMessage(from, {
+                                audio: fs.readFileSync(filePath),
+                                mimetype: 'audio/ogg; codecs=opus',
+                                ptt: true
+                            }, { quoted: msg })
+                        } finally {
+                            cleanup()
+                        }
+
                         await conn.sendPresenceUpdate('paused', from)
-                        reply(`[Error]: ${e.message}`) 
+                    } catch (e) {
+                        await conn.sendPresenceUpdate('paused', from)
+                        reply(`[Error]: ${e.message}`)
                     }
                     break
 
