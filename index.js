@@ -671,95 +671,97 @@ export async function handleMessage(conn, m, options = {}) {
                     } catch (e) { reply(`[Error al expulsar]: ${e.message}`) }
                     break
 
-                case 'tag':
-                case 'all':
-                case 'invocar':
-                case 'totales': 
-                    try {
-                        if (!from.endsWith('@g.us')) return reply('「✎」 Este comando solo funciona en grupos.')
+                    case 'tag': 
+                    case 'all':
+                    case 'invocar':
+                    case 'totales':
+    try {
+        if (!from.endsWith('@g.us')) return reply('「✎」 Este comando solo funciona en grupos.')
 
-                        const groupMetadata = await conn.groupMetadata(from)
-                        const participants = groupMetadata.participants
-                        
-                        const currentSenderNumber = senderNumber
-                        const botNumber = extractNumber(conn.user?.id || '')
-                        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
+        const groupMetadata = await conn.groupMetadata(from)
+        const participants = groupMetadata.participants
 
-                        const senderJids = [
-                            sender,
-                            msg.key?.participant,
-                            msg.key?.participantAlt,
-                            msg.key?.participantPn,
-                            msg.key?.remoteJidAlt
-                        ]
-                        const userParticipant = await findGroupParticipant(
-                            conn,
-                            participants,
-                            from,
-                            senderJids,
-                            [currentSenderNumber]
-                        )
-                        const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
-                        const isOwner = currentSenderNumber === botNumber || 
-                                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) || 
-                                        pushName === global.dev
+        const currentSenderNumber = senderNumber
+        const botNumber = extractNumber(conn.user?.id || '')
+        const ownerNumberConfig = extractNumber(global.owner?.[0]?.[0] || global.owner?.[0] || '')
 
-                        if (!isUserAdmin && !isOwner) {
-                            return reply('「✎」 Este comando es solo para Administradores.')
-                        }
+        const senderJids = [
+            sender,
+            msg.key?.participant,
+            msg.key?.participantAlt,
+            msg.key?.participantPn,
+            msg.key?.remoteJidAlt
+        ]
+        const userParticipant = await findGroupParticipant(
+            conn,
+            participants,
+            from,
+            senderJids,
+            [currentSenderNumber]
+        )
+        const isUserAdmin = userParticipant?.admin === 'admin' || userParticipant?.admin === 'superadmin'
+        const isOwner = currentSenderNumber === botNumber ||
+                        (ownerNumberConfig && currentSenderNumber === ownerNumberConfig) ||
+                        pushName === global.dev
 
-                        const targetParticipants = participants.map(p => p.id).filter(Boolean)
-                        const invisibleTag = '\u200B'.repeat(100)
+        if (!isUserAdmin && !isOwner) {
+            return reply('「✎」 Este comando es solo para Administradores.')
+        }
 
-                        const contextInfo = getContextInfo(msg)
-                        const quotedMsg = contextInfo?.quotedMessage
+        const targetParticipants = participants.map(p => p.id).filter(Boolean)
+        const invisibleTag = '\u200B'.repeat(100)
 
-                        await conn.sendPresenceUpdate('composing', from)
+        const contextInfo = getContextInfo(msg)
+        const quotedMsg = contextInfo?.quotedMessage
 
-                        if (quotedMsg) {
-                            const quotedType = Object.keys(quotedMsg)[0]
-                            const quotedContent = quotedMsg[quotedType]
-                            let customText = args.join(' ').trim()
+        await conn.sendPresenceUpdate('composing', from)
 
-                            if (quotedType === 'conversation' || quotedType === 'extendedTextMessage') {
-                                let textToFormat = customText || quotedContent.text || quotedContent || ''
-                                return await conn.sendMessage(from, {
-                                    text: `${textToFormat} ${invisibleTag}`,
-                                    mentions: targetParticipants
-                                }, { quoted: msg })
-                            }
+        if (quotedMsg) {
+            const quotedType = Object.keys(quotedMsg)[0]
+            const quotedContent = quotedMsg[quotedType]
+            let customText = args.join(' ').trim()
 
-                            const quotedKey = {
-                                remoteJid: from,
-                                fromMe: contextInfo.participant === conn.user?.id,
-                                id: contextInfo.stanzaId,
-                                participant: contextInfo.participant
-                            }
+            if (quotedType === 'conversation' || quotedType === 'extendedTextMessage') {
+                let textToFormat = customText || quotedContent.text || quotedContent || ''
+                return await conn.sendMessage(from, {
+                    text: `${textToFormat} ${invisibleTag}`,
+                    mentions: targetParticipants
+                })
+            }
 
-                            return await conn.sendMessage(from, {
-                                forward: {
-                                    key: quotedKey,
-                                    message: quotedMsg
-                                },
-                                contextInfo: {
-                                    mentionedJid: targetParticipants
-                                }
-                            })
-                        }
+            const quotedKey = {
+                remoteJid: from,
+                fromMe: contextInfo.participant === conn.user?.id,
+                id: contextInfo.stanzaId,
+                participant: contextInfo.participant
+            }
 
-                        let textMessage = args.join(' ').trim()
-                        if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
+            return await conn.sendMessage(from, {
+                forward: {
+                    key: quotedKey,
+                    message: quotedMsg
+                },
+                contextInfo: {
+                    mentionedJid: targetParticipants
+                }
+            })
+        }
 
-                        let fullTextMessage = `${textMessage} ${invisibleTag}`
+        let textMessage = args.join(' ').trim()
+        if (!textMessage) return reply('「✎」 Ingresa un mensaje o responde a un archivo.')
 
-                        await conn.sendMessage(from, { 
-                            text: fullTextMessage, 
-                            mentions: targetParticipants 
-                        }, { quoted: msg })
+        let fullTextMessage = `${textMessage} ${invisibleTag}`
 
-                    } catch (e) { reply(`[Error]: ${e.message}`) }
-                    break
+        await conn.sendMessage(from, {
+            text: fullTextMessage,
+            mentions: targetParticipants
+        }, { quoted: msg })
 
+    } catch (e) {
+        reply(`[Error]: ${e.message}`)
+    }
+    break
+                    
                 case 'play':
                 case 'mp3':
                 case 'audio':
