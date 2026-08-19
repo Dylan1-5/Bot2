@@ -11,6 +11,7 @@ import yts from 'yt-search'
 import readline from 'readline'
 import { GoogleGenAI } from '@google/genai'
 import { downloadMedia as downloadYtMedia } from './lib/ytdl.js'
+import { handleSticker } from './lib/sticker.js'
 import { handleKick } from './lib/kick.js'
 import { startSubBot, loadAllSubBots, subBots, subBotOwners } from './lib/subbot.js'
 import {
@@ -57,6 +58,7 @@ const menuCommands = ({ prefix }) => `
   └─ *${prefix}play* · *${prefix}mp3* · *${prefix}audio*
   └─ *${prefix}song* · *${prefix}musica*
   └─ *${prefix}play2* · *${prefix}v* · *${prefix}mp4* · *${prefix}video*
+  └─ *${prefix}sticker* · *${prefix}s*
   └─ *${prefix}fixvideo* · *${prefix}arreglarvideo* · *${prefix}repairvideo*
 
 ɢʀᴜᴘᴏs
@@ -75,7 +77,7 @@ sᴜʙ ʙᴏᴛs
   └─ *${prefix}bots* · *${prefix}subbots* · *${prefix}listbots*
   └─ *${prefix}stopbot* · *${prefix}stopsubbot*`
 
-const premium2Menu = ({ name, prefix, dev }) => `╭══════════════════════════════╮
+const premium2Menu = ({ name, prefix, dev, userMention, botName }) => `╭══════════════════════════════╮
 ║         ᴘʀᴇᴍɪᴜᴍ ²              ║
 ╰══════════════════════════════╯
 
@@ -83,19 +85,23 @@ const premium2Menu = ({ name, prefix, dev }) => `╭═════════�
         ──────────────────
         Prefijo  ›  \`${prefix}\`
         Dev      ›  \`${dev}\`
+
+Hola ${userMention}, soy ${botName}
 ${menuCommands({ prefix })}
 
         ── · ──
      _Elegancia en cada comando_
         ── · ──`
 
-const premiumMenu = ({ name, prefix, dev }) => `╭─────── · ───────╮
+const premiumMenu = ({ name, prefix, dev, userMention, botName }) => `╭─────── · ───────╮
       ᴍᴇɴᴜ ᴘʀᴇᴍɪᴜᴍ
 ╰─────── · ───────╯
 
 *Bienvenido, ${name}*
 _Prefijo:_ \`${prefix}\`
 _Dev:_ \`${dev}\`
+
+Hola ${userMention}, soy ${botName}
 ${menuCommands({ prefix })}
 
 _Desarrollado por ${dev}_`
@@ -146,36 +152,6 @@ async function downloadMedia(m, conn) {
     } catch (error) {
         throw new Error(`Error al descargar media: ${error.message}`)
     }
-}
-
-
-// Busca y prueba varios resultados para no quedarse con un video restringido o roto.
-async function searchAndDownloadAudio(query) {
-    const queries = [query]
-    if (!/\bletra\b/i.test(query)) queries.push(`${query} letra`)
-
-    const attempted = new Set()
-    let lastError = null
-
-    for (const searchQuery of queries) {
-        const search = await yts({ query: searchQuery }).catch(() => null)
-        const videos = (search?.videos || []).slice(0, 10)
-
-        for (const video of videos) {
-            if (!video?.url || attempted.has(video.url)) continue
-            attempted.add(video.url)
-
-            try {
-                const media = await downloadYtMedia(video.url, 'vn')
-                return { video, ...media, searchQuery }
-            } catch (error) {
-                lastError = error
-                console.warn(`[YouTube] Se omite "${video.title}": ${error.message}`)
-            }
-        }
-    }
-
-    throw lastError || new Error('No se pudo descargar ningún resultado de YouTube.')
 }
 
 const question = (text) => {
@@ -355,13 +331,26 @@ export async function handleMessage(conn, m, options = {}) {
                     break
                 }
 
+                case 'sticker':
+                case 's':
+                    await handleSticker(conn, msg, {
+                        args,
+                        prefix: usedPrefix || prefixList[0],
+                        command
+                    })
+                    break
+
                 case 'menu':
                 case 'help':
                 case 'ayuda':
+                    const menuMentionJid = senderNumber ? `${senderNumber}@s.whatsapp.net` : (msg.sender || sender)
+                    const menuMention = senderNumber ? `@${senderNumber}` : '@usuario'
                     const menu = (options.isSubBot ? premiumMenu : premium2Menu)({
                         name: pushName,
                         prefix: usedPrefix || prefixList[0],
-                        dev: global.dev || 'Dy'
+                        dev: global.dev || 'Dy',
+                        botName: global.botName || 'Hi Bot',
+                        userMention: menuMention
                     })
                     
                     await conn.sendPresenceUpdate('composing', from)
@@ -369,12 +358,13 @@ export async function handleMessage(conn, m, options = {}) {
                     await conn.sendPresenceUpdate('paused', from)
                     
                     if (global.banner) {
-                        await conn.sendMessage(from, { 
-                            image: { url: global.banner }, 
-                            caption: menu 
+                        await conn.sendMessage(from, {
+                            image: { url: global.banner },
+                            caption: menu,
+                            mentions: menuMentionJid && !menuMentionJid.endsWith('@lid') ? [menuMentionJid] : []
                         }, { quoted: msg })
                     } else {
-                        await reply(menu)
+                        await reply(menu, {}, { mentions: menuMentionJid && !menuMentionJid.endsWith('@lid') ? [menuMentionJid] : [] })
                     }
                     break
 
@@ -797,45 +787,45 @@ export async function handleMessage(conn, m, options = {}) {
                 case 'musica':
                     try {
                         if (!args[0]) return reply('Ingresa un nombre o URL de YouTube')
-
+                        
                         await react('🎵')
                         const input_text = args.join(' ').trim()
-                        await conn.sendPresenceUpdate('recording', from)
 
-                        // Prueba hasta 10 resultados y luego repite la búsqueda con "letra".
-                        // Así se saltan videos con restricción de edad o con errores de descarga.
-                        const { video, filePath, cleanup } = await searchAndDownloadAudio(input_text)
+                        let search = await yts({ query: input_text }).catch(() => null)
+                        let video = search?.videos?.[0]
+                        if (!video) return reply('No se encontraron resultados.')
 
-                        try {
-                            if (CONFIG.bannerEnabled) {
-                                const captionInfo = `➩ *Descargando Nota de Voz:*
+                        if (CONFIG.bannerEnabled) {
+                            const captionInfo = `➩ *Descargando Nota de Voz:*
 ${video.title}
 
 │ ❖ *Canal:* ${video.author.name}
 │ ⏳ *Duración:* ${video.timestamp}
-│ ❀ *Vistas:* ${Number(video.views || 0).toLocaleString()}
+│ ❀ *Vistas:* ${video.views.toLocaleString()}
 │ ☆ *Publicado:* ${video.ago}
 │ 🔗 *Enlace:* ${video.url}`
 
-                                await conn.sendPresenceUpdate('composing', from)
-                                await delay(500)
-                                await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
-                            }
-
-                            await conn.sendMessage(from, {
-                                audio: fs.readFileSync(filePath),
-                            fileName: `${video.title}.ogg`,
+                            await conn.sendPresenceUpdate('composing', from)
+                            await delay(500)
+                            await conn.sendMessage(from, { image: { url: video.image }, caption: captionInfo }, { quoted: msg })
+                        }
+                        
+                        await conn.sendPresenceUpdate('recording', from)
+                        
+                        const { filePath, cleanup } = await downloadYtMedia(video.url, 'vn')
+                        
+                        await conn.sendMessage(from, {
+                            audio: fs.readFileSync(filePath),
                             mimetype: 'audio/ogg; codecs=opus',
                             ptt: true
-                            }, { quoted: msg })
-                        } finally {
-                            cleanup()
-                        }
+                        }, { quoted: msg })
+                        
+                        cleanup()
+                        await conn.sendPresenceUpdate('paused', from)
 
+                    } catch (e) { 
                         await conn.sendPresenceUpdate('paused', from)
-                    } catch (e) {
-                        await conn.sendPresenceUpdate('paused', from)
-                        reply(`[Error]: ${e.message}`)
+                        reply(`[Error]: ${e.message}`) 
                     }
                     break
 
