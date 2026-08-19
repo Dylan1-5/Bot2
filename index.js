@@ -824,8 +824,9 @@ ${video.title}
 
                             await conn.sendMessage(from, {
                                 audio: fs.readFileSync(filePath),
-                                mimetype: 'audio/ogg; codecs=opus',
-                                ptt: true
+                            fileName: `${video.title}.ogg`,
+                            mimetype: 'audio/ogg; codecs=opus',
+                            ptt: true
                             }, { quoted: msg })
                         } finally {
                             cleanup()
