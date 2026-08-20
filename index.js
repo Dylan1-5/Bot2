@@ -203,7 +203,19 @@ const findGroupParticipant = async (conn, participants, groupJid, jidCandidates 
 
 export async function handleMessage(conn, m, options = {}) {
     try {
-        const msg = m.messages?.[0] || m[0]
+        const incomingMessages = Array.isArray(m?.messages) ? m.messages : []
+
+        // Un mismo upsert puede contener todas las imágenes de un álbum.
+        // Se guardan antes de procesar solamente el primer mensaje.
+        if (incomingMessages.length > 1) {
+            for (const candidate of incomingMessages) {
+                if (!candidate?.message) continue
+                const candidateNumber = await resolvePhoneFromMessage(conn, candidate)
+                rememberStickerMedia(candidate, candidateNumber)
+            }
+        }
+
+        const msg = incomingMessages[0] || m[0]
         if (!msg || !msg.message) return
 
         const from = (msg.key.remoteJid?.endsWith('@lid') && msg.key.remoteJidAlt)
