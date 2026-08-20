@@ -59,7 +59,7 @@ const menuCommands = ({ prefix }) => `
   └─ *${prefix}song* · *${prefix}musica*
   └─ *${prefix}play2* · *${prefix}v* · *${prefix}mp4* · *${prefix}video*
   └─ *${prefix}sticker* · *${prefix}s*
-  └─ *${prefix}sticker all* · *${prefix}s all*
+  └─ *${prefix}sticker all* · *${prefix}s all* (responde al álbum)
   └─ *${prefix}fixvideo* · *${prefix}arreglarvideo* · *${prefix}repairvideo*
 
 ɢʀᴜᴘᴏs
