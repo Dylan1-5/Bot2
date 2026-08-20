@@ -11,7 +11,7 @@ import yts from 'yt-search'
 import readline from 'readline'
 import { GoogleGenAI } from '@google/genai'
 import { downloadMedia as downloadYtMedia } from './lib/ytdl.js'
-import { handleSticker } from './lib/sticker.js'
+import { handleSticker, rememberStickerMedia } from './lib/sticker.js'
 import { handleKick } from './lib/kick.js'
 import { startSubBot, loadAllSubBots, subBots, subBotOwners } from './lib/subbot.js'
 import {
@@ -59,6 +59,7 @@ const menuCommands = ({ prefix }) => `
   └─ *${prefix}song* · *${prefix}musica*
   └─ *${prefix}play2* · *${prefix}v* · *${prefix}mp4* · *${prefix}video*
   └─ *${prefix}sticker* · *${prefix}s*
+  └─ *${prefix}sticker all* · *${prefix}s all*
   └─ *${prefix}fixvideo* · *${prefix}arreglarvideo* · *${prefix}repairvideo*
 
 ɢʀᴜᴘᴏs
@@ -212,6 +213,7 @@ export async function handleMessage(conn, m, options = {}) {
         const senderNumber = await resolvePhoneFromMessage(conn, msg)
         const pushName = msg.pushName || 'Usuario'
         const type = Object.keys(msg.message)[0]
+        rememberStickerMedia(msg, senderNumber)
         
         if (type === 'protocolMessage' || type === 'senderKeyDistributionMessage') return
 
