@@ -334,13 +334,18 @@ export async function handleMessage(conn, m, options = {}) {
                 }
 
                 case 'sticker':
-                case 's':
+                case 's': {
+                    const stickerArgs = args.map(arg => String(arg).trim()).filter(Boolean)
+                    const isStickerAll = stickerArgs.some(arg => arg.toLowerCase() === 'all')
+
                     await handleSticker(conn, msg, {
-                        args,
+                        args: stickerArgs,
+                        all: isStickerAll,
                         prefix: usedPrefix || prefixList[0],
                         command
                     })
                     break
+                }
 
                 case 'menu':
                 case 'help':
