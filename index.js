@@ -1107,12 +1107,14 @@ async function startBot() {
                 prepared.push({ serialized, isCommand })
             }
 
-            // Los comandos pendientes tienen prioridad sobre mensajes históricos.
-            prepared.sort((a, b) => Number(b.isCommand) - Number(a.isCommand))
+            // Los comandos pendientes tienen prioridad y el historial sin
+            // comando no se procesa: así no bloquea la respuesta al reconectar.
+            const commandMessages = prepared.filter(item => item.isCommand)
+            commandMessages.sort((a, b) => Number(b.isCommand) - Number(a.isCommand))
 
-            for (const item of prepared) {
+            for (const item of commandMessages) {
                 await handleMessage(conn, { messages: [item.serialized] }, {
-                    fast: upsertType === 'append'
+                    fast: upsertType === 'append' || incoming.length > 1
                 })
             }
         } catch (error) {
