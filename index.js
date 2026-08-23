@@ -59,7 +59,7 @@ const menuCommands = ({ prefix }) => `
   └─ *${prefix}song* · *${prefix}musica*
   └─ *${prefix}play2* · *${prefix}v* · *${prefix}mp4* · *${prefix}video*
   └─ *${prefix}sticker* · *${prefix}s*
-  └─ *${prefix}sticker all* · *${prefix}s all* (responde al álbum)
+  └─ *${prefix}sticker all* · *${prefix}s all* (responde al grupo)
   └─ *${prefix}fixvideo* · *${prefix}arreglarvideo* · *${prefix}repairvideo*
 
 ɢʀᴜᴘᴏs
@@ -309,7 +309,7 @@ export async function handleMessage(conn, m, options = {}) {
         if (isCmd) {
             const reply = async (text, opt = {}, extra = {}) => {
                 await conn.sendPresenceUpdate('composing', from)
-                await delay(500)
+                if (!options.fast) await delay(500)
                 await conn.sendPresenceUpdate('paused', from)
                 return conn.sendMessage(from, { text, ...extra }, { quoted: msg, ...opt })
             }
@@ -373,7 +373,7 @@ export async function handleMessage(conn, m, options = {}) {
                     })
                     
                     await conn.sendPresenceUpdate('composing', from)
-                    await delay(500)
+                    if (!options.fast) await delay(500)
                     await conn.sendPresenceUpdate('paused', from)
                     
                     if (global.banner) {
@@ -1081,14 +1081,42 @@ async function startBot() {
         }
     }
 
-    conn.ev.on('messages.upsert', async ({ messages }) => {
-        for (const message of messages || []) {
-            try {
+    conn.ev.on('messages.upsert', async ({ messages, type: upsertType }) => {
+        const incoming = messages || []
+        const prepared = []
+
+        try {
+            // Primero serializamos y guardamos todos los medios del lote.
+            // Así un comando acumulado puede ejecutarse sin esperar el historial.
+            for (const message of incoming) {
+                if (!message?.message) continue
                 const serialized = await smsg(conn, message)
-                await handleMessage(conn, { messages: [serialized] })
-            } catch (error) {
-                console.error('[Error procesando mensaje]:', error)
+                const number = await resolvePhoneFromMessage(conn, serialized)
+                rememberStickerMedia(serialized, number)
+                const messageType = Object.keys(serialized.message || {})[0] || ''
+                const media = serialized.message?.[messageType] || {}
+                const body = messageType === 'conversation'
+                    ? serialized.message.conversation || ''
+                    : messageType === 'extendedTextMessage'
+                        ? media.text || ''
+                        : media.caption || ''
+                const prefixes = [global.prefix, global.subPrefix, global.subprefix]
+                    .flatMap(value => Array.isArray(value) ? value : [value])
+                    .filter(Boolean)
+                const isCommand = prefixes.some(prefix => body.startsWith(prefix)) || body.toLowerCase().startsWith('bot ')
+                prepared.push({ serialized, isCommand })
             }
+
+            // Los comandos pendientes tienen prioridad sobre mensajes históricos.
+            prepared.sort((a, b) => Number(b.isCommand) - Number(a.isCommand))
+
+            for (const item of prepared) {
+                await handleMessage(conn, { messages: [item.serialized] }, {
+                    fast: upsertType === 'append'
+                })
+            }
+        } catch (error) {
+            console.error('[Error procesando lote de mensajes]:', error)
         }
     })
 
